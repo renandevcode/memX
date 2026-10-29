@@ -3,7 +3,8 @@
 import asyncio
 import ipaddress
 import json
-from typing import Any
+from pathlib import Path
+from typing import Annotated, Any
 
 import typer
 
@@ -15,11 +16,25 @@ from project_memory.infrastructure.db import make_engine, migrate
 app = typer.Typer(help="MemX local memory operations")
 
 
-@app.command("init")
+@app.command("db-init")
 def init_database() -> None:
     """Apply versioned migrations to the configured local database."""
     migrate(Settings().db_url)
     typer.echo("Database migrated")
+
+
+@app.command("init")
+def init_project(root: Annotated[Path, typer.Option("--root")] = Path(".")) -> None:
+    """Enable MemX for this project, preserving existing agent instructions."""
+    from project_memory.interfaces.activation import activate
+
+    settings = Settings()
+    migrate(settings.db_url)
+    try:
+        result = asyncio.run(activate(root, settings))
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(json.dumps(result))
 
 
 @app.command("serve-http")
