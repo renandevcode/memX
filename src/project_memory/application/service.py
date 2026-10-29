@@ -7,14 +7,10 @@ import hashlib
 import json
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, cast
 from uuid import uuid4
 
-from sqlalchemy import text
-from sqlalchemy.engine import CursorResult
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
-
-from project_memory.infrastructure.db import sessions
+from project_memory.application.paths import DEFAULT_EXCLUDED_PATHS, is_excluded
+from project_memory.application.storage import Session, Store, text
 
 
 def new_id() -> str:
@@ -41,9 +37,10 @@ class MemoryError(Exception):
 
 
 class MemoryService:
-    def __init__(self, engine: AsyncEngine):
-        self.engine = engine
-        self.session_factory = sessions(engine)
+    def __init__(self, store: Store, excluded_paths: tuple[str, ...] = DEFAULT_EXCLUDED_PATHS):
+        self.store = store
+        self.session_factory = store.session_factory
+        self.excluded_paths = excluded_paths
 
     async def project_register(self, *, root: str, name: str) -> dict[str, str]:
         path = Path(root).resolve(strict=True)
@@ -89,7 +86,7 @@ class MemoryService:
                 raise MemoryError("NOT_FOUND", "Project not found")
             return dict(row)
 
-    async def _row(self, session: AsyncSession, table: str, entity_id: str, project_id: str) -> dict[str, object]:
+    async def _row(self, session: Session, table: str, entity_id: str, project_id: str) -> dict[str, object]:
         if table not in {"tasks", "sessions", "evidence", "checkpoints", "handoffs"}:
             raise ValueError("Unsupported entity")
         row = (
@@ -130,7 +127,7 @@ class MemoryService:
             )
         return await self.task_read(project_id, task_id)
 
-    async def _project_exists(self, session: AsyncSession, project_id: str) -> None:
+    async def _project_exists(self, session: Session, project_id: str) -> None:
         found = (
             await session.execute(text("SELECT 1 FROM projects WHERE id=:id"), {"id": project_id})
         ).scalar_one_or_none()
@@ -142,6 +139,65 @@ class MemoryService:
             row = await self._row(session, "tasks", task_id, project_id)
             row["acceptance_criteria"] = json.loads(str(row.pop("acceptance")))
             return row
+
+    async def task_transition(
+        self,
+        *,
+        project_id: str,
+        task_id: str,
+        expected_version: int,
+        status: str,
+        reason: str,
+        evidence_refs: list[str] | None = None,
+        human_exception: str | None = None,
+    ) -> dict[str, object]:
+        transitions = {
+            "todo": {"in_progress", "blocked", "cancelled"},
+            "in_progress": {"blocked", "in_review", "cancelled"},
+            "blocked": {"in_progress", "cancelled"},
+            "in_review": {"in_progress", "blocked", "done", "cancelled"},
+            "done": set(),
+            "cancelled": set(),
+        }
+        if not reason.strip() or (human_exception is not None and not human_exception.strip()):
+            raise MemoryError("INVALID_INPUT", "Transition reason and human exception must be nonempty")
+        async with self.session_factory() as session, session.begin():
+            task = await self._row(session, "tasks", task_id, project_id)
+            current = str(task["status"])
+            if status not in transitions.get(current, set()):
+                raise MemoryError("INVALID_INPUT", f"Cannot move task from {current} to {status}")
+            if task["version"] != expected_version:
+                raise MemoryError("VERSION_CONFLICT", "Task version changed")
+            verified = False
+            for evidence_id in evidence_refs or []:
+                evidence = await self._row(session, "evidence", evidence_id, project_id)
+                verified = verified or evidence["verification_status"] == "verified"
+            if status == "done" and not verified and not human_exception:
+                raise MemoryError("INVALID_REFERENCE", "Done requires verified evidence or explicit human exception")
+            changed = await session.execute(
+                text(
+                    "UPDATE tasks SET status=:status,version=version+1 "
+                    "WHERE id=:id AND project_id=:pid AND version=:version"
+                ),
+                {"status": status, "id": task_id, "pid": project_id, "version": expected_version},
+            )
+            if changed.rowcount != 1:
+                raise MemoryError("VERSION_CONFLICT", "Task version changed")
+            await session.execute(
+                text(
+                    "INSERT INTO audit_entries (id,project_id,operation,target_id,target_version,reason,created_at) "
+                    "VALUES (:id,:pid,'task_transition',:target,:version,:reason,:at)"
+                ),
+                {
+                    "id": new_id(),
+                    "pid": project_id,
+                    "target": task_id,
+                    "version": expected_version + 1,
+                    "reason": reason + (f"; human_exception: {human_exception}" if human_exception else ""),
+                    "at": now(),
+                },
+            )
+        return {"id": task_id, "status": status, "version": expected_version + 1}
 
     async def session_start(
         self,
@@ -211,8 +267,7 @@ class MemoryService:
                     if lowered in {"password", "token", "secret", "api_key", "authorization"}:
                         return True
                     if lowered in {"path", "file", "artifact_ref"} and isinstance(item, str):
-                        parts = Path(item).parts
-                        if ".env" in parts or "secrets" in parts:
+                        if is_excluded(item, self.excluded_paths):
                             return True
                     if contains_excluded(item):
                         return True
@@ -285,6 +340,8 @@ class MemoryService:
             raise MemoryError("INVALID_INPUT", "Explicit client evidence remains unverified")
         project = await self.project_read(project_id)
         root = Path(project["root"])
+        if is_excluded(artifact_ref, self.excluded_paths):
+            raise MemoryError("ACCESS_DENIED", "Artifact path is excluded or outside project")
         try:
             artifact = (root / artifact_ref).resolve(strict=True)
         except (OSError, RuntimeError) as exc:
@@ -292,8 +349,9 @@ class MemoryService:
         if (
             not artifact.is_relative_to(root)
             or not artifact.is_file()
-            or ".env" in artifact.parts
-            or "secrets" in artifact.parts
+            or is_excluded(
+                artifact.relative_to(root) if artifact.is_relative_to(root) else artifact, self.excluded_paths
+            )
         ):
             raise MemoryError("ACCESS_DENIED", "Artifact path is excluded or outside project")
         data = await asyncio.to_thread(artifact.read_bytes)
@@ -355,16 +413,19 @@ class MemoryService:
         project = await self.project_read(project_id)
         root = Path(project["root"])
         for relative in changed_paths:
+            if is_excluded(relative, self.excluded_paths):
+                raise MemoryError("ACCESS_DENIED", "Changed path is excluded or outside project")
             path = (root / relative).resolve()
             if (
                 Path(relative).is_absolute()
                 or not path.is_relative_to(root)
-                or ".env" in path.parts
-                or "secrets" in path.parts
+                or is_excluded(path.relative_to(root) if path.is_relative_to(root) else path, self.excluded_paths)
             ):
                 raise MemoryError("ACCESS_DENIED", "Changed path is excluded or outside project")
         async with self.session_factory() as session, session.begin():
             task = await self._row(session, "tasks", task_id, project_id)
+            if task["status"] not in {"todo", "in_progress", "blocked"}:
+                raise MemoryError("INVALID_INPUT", "Task status does not allow a checkpoint")
             owner = await self._row(session, "sessions", session_id, project_id)
             if owner["task_id"] not in (None, task_id):
                 raise MemoryError("INVALID_REFERENCE", "Session belongs to another task")
@@ -406,7 +467,7 @@ class MemoryService:
                 ),
                 {"tid": task_id, "pid": project_id, "version": expected_version},
             )
-            if cast(CursorResult[Any], result).rowcount != 1:
+            if result.rowcount != 1:
                 raise MemoryError("VERSION_CONFLICT", "Task version changed")
             if fail_after_update:
                 raise RuntimeError("Injected transaction failure")

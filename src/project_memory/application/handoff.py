@@ -2,13 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any, cast
-
-from sqlalchemy import text
-from sqlalchemy.engine import CursorResult
-
 from project_memory.application.memory import MemoryService as MemoryBase
 from project_memory.application.service import MemoryError, fingerprint, new_id, now
+from project_memory.application.storage import text
 
 
 class MemoryService(MemoryBase):
@@ -74,7 +70,7 @@ class MemoryService(MemoryBase):
                 ),
                 {"sid": session_id, "id": handoff_id, "pid": project_id, "version": expected_version},
             )
-            if cast(CursorResult[Any], changed).rowcount != 1:
+            if changed.rowcount != 1:
                 raise MemoryError("VERSION_CONFLICT", "Handoff was already accepted or changed")
             checkpoint_id = str(handoff["checkpoint_id"])
             task_id = str(handoff["task_id"])

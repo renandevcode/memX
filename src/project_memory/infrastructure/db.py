@@ -1,10 +1,11 @@
 """Async SQLite engine and migration entry point."""
 
 from pathlib import Path
+from typing import Any
 
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import event
+from sqlalchemy import event, text
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -12,8 +13,40 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
+from project_memory.application.storage import Session
 
-def make_engine(db_url: str) -> AsyncEngine:
+
+class SqliteSession:
+    def __init__(self, inner: AsyncSession):
+        self.inner = inner
+
+    async def __aenter__(self) -> Session:
+        await self.inner.__aenter__()
+        return self
+
+    async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        await self.inner.__aexit__(exc_type, exc, tb)
+
+    def begin(self) -> Any:
+        return self.inner.begin()
+
+    async def execute(self, query: str, params: Any = None) -> Any:
+        return await self.inner.execute(text(query), params)
+
+
+class SqliteStore:
+    def __init__(self, engine: AsyncEngine):
+        self.engine = engine
+        self._sessions = async_sessionmaker(engine, expire_on_commit=False)
+
+    def session_factory(self) -> Session:
+        return SqliteSession(self._sessions())
+
+    async def dispose(self) -> None:
+        await self.engine.dispose()
+
+
+def make_engine(db_url: str) -> SqliteStore:
     engine = create_async_engine(db_url, connect_args={"timeout": 5})
 
     @event.listens_for(engine.sync_engine, "connect")
@@ -24,11 +57,7 @@ def make_engine(db_url: str) -> AsyncEngine:
         cursor.execute("PRAGMA journal_mode=WAL")
         cursor.close()
 
-    return engine
-
-
-def sessions(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
-    return async_sessionmaker(engine, expire_on_commit=False)
+    return SqliteStore(engine)
 
 
 def migrate(db_url: str) -> None:

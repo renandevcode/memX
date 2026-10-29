@@ -8,6 +8,64 @@ from project_memory.infrastructure.db import make_engine, migrate
 
 
 @pytest.mark.asyncio
+async def test_configured_exclusion_blocks_source_and_artifact(tmp_path: Path) -> None:
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "private.txt").write_text("private")
+    url = f"sqlite+aiosqlite:///{tmp_path / 'state.db'}"
+    migrate(url)
+    engine = make_engine(url)
+    service = MemoryService(engine, excluded_paths=("private.txt",))
+    pid = (await service.project_register(root=str(root), name="Project"))["id"]
+    with pytest.raises(MemoryError) as source:
+        await service.source_index(project_id=pid, paths=["private.txt"])
+    assert source.value.code == "ACCESS_DENIED"
+    with pytest.raises(MemoryError) as artifact:
+        await service.evidence_create(
+            project_id=pid,
+            kind="file",
+            artifact_ref="private.txt",
+            content_hash="unused",
+            checkout_ref={},
+        )
+    assert artifact.value.code == "ACCESS_DENIED"
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_context_expands_one_related_active_record(tmp_path: Path) -> None:
+    url = f"sqlite+aiosqlite:///{tmp_path / 'state.db'}"
+    migrate(url)
+    engine = make_engine(url)
+    service = MemoryService(engine)
+    pid = (await service.project_register(root=str(tmp_path), name="Project"))["id"]
+    tid = (await service.task_create(project_id=pid, title="Task", objective="Search", acceptance_criteria=["found"]))[
+        "id"
+    ]
+    source = await service.memory_create(
+        project_id=pid, category="decisions", title="Anchor", body="needle", status="active"
+    )
+    target = await service.memory_create(
+        project_id=pid, category="findings", title="Related", body="haystack", status="active"
+    )
+    await service.relation_create(
+        project_id=pid, source_id=source["id"], target_id=target["id"], relation_type="supported_by"
+    )
+    hidden = await service.memory_create(
+        project_id=pid, category="findings", title="Hidden", body="outside scope", scope="other", status="active"
+    )
+    await service.relation_create(
+        project_id=pid, source_id=source["id"], target_id=hidden["id"], relation_type="affects"
+    )
+    context = await service.context_build(project_id=pid, task_id=tid, query="needle", budget_chars=4000)
+    related = next(item for item in context["selected_items"] if item["id"] == target["id"])
+    assert related["related_from"] == source["id"]
+    assert related["relation_type"] == "supported_by"
+    assert hidden["id"] not in {item["id"] for item in context["selected_items"]}
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
 async def test_versioned_memory_search_delete_and_source_scope(tmp_path: Path) -> None:
     project_root = tmp_path / "project"
     other_root = tmp_path / "other"

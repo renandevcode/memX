@@ -12,6 +12,7 @@ OPERATIONS = {
     "project_read",
     "task_create",
     "task_read",
+    "task_transition",
     "session_start",
     "session_end",
     "event_append",
@@ -75,6 +76,12 @@ class Task(Output):
     objective: str
     acceptance_criteria: list[str]
     scope: str
+    status: str
+    version: int
+
+
+class TaskTransitioned(Output):
+    id: str
     status: str
     version: int
 
@@ -220,6 +227,7 @@ OUTPUT_TYPES: dict[str, Any] = {
     "project_read": ProjectRead,
     "task_create": Task,
     "task_read": Task,
+    "task_transition": TaskTransitioned,
     "session_start": SessionStarted,
     "session_end": SessionEnded,
     "event_append": Event,

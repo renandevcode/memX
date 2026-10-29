@@ -9,10 +9,7 @@ import re
 from pathlib import Path
 from typing import Any, cast
 
-from sqlalchemy import text
-from sqlalchemy.engine import CursorResult
-from sqlalchemy.ext.asyncio import AsyncSession
-
+from project_memory.application.paths import is_excluded
 from project_memory.application.service import (
     MemoryError,
     encoded,
@@ -22,6 +19,7 @@ from project_memory.application.service import (
 from project_memory.application.service import (
     MemoryService as ContinuityService,
 )
+from project_memory.application.storage import Session, text
 
 CATEGORIES = {"policies", "project_map", "decisions", "findings", "task_state", "session_log", "evidence"}
 STATUSES = {"proposed", "active", "superseded", "archived"}
@@ -33,7 +31,7 @@ def _hash(data: bytes) -> str:
 
 
 class MemoryService(ContinuityService):
-    async def _record(self, session: AsyncSession, project_id: str, record_id: str) -> dict[str, Any]:
+    async def _record(self, session: Session, project_id: str, record_id: str) -> dict[str, Any]:
         row = (
             (
                 await session.execute(
@@ -48,7 +46,7 @@ class MemoryService(ContinuityService):
             raise MemoryError("NOT_FOUND", "Memory record not found in project")
         return dict(row)
 
-    async def _validate_refs(self, session: AsyncSession, project_id: str, refs: list[str]) -> None:
+    async def _validate_refs(self, session: Session, project_id: str, refs: list[str]) -> None:
         for ref in refs:
             found = (
                 await session.execute(
@@ -63,7 +61,7 @@ class MemoryService(ContinuityService):
             if found is None:
                 raise MemoryError("INVALID_REFERENCE", "Source reference is missing from project")
 
-    async def _index_fts(self, session: AsyncSession, record_id: str, title: str, body: str) -> None:
+    async def _index_fts(self, session: Session, record_id: str, title: str, body: str) -> None:
         await session.execute(text("DELETE FROM memory_fts WHERE record_id=:id"), {"id": record_id})
         await session.execute(
             text("INSERT INTO memory_fts (record_id,title,body) VALUES (:id,:title,:body)"),
@@ -168,7 +166,7 @@ class MemoryService(ContinuityService):
                 ),
                 {"id": record_id, "pid": project_id, "version": expected_version, "status": status or record["status"]},
             )
-            if cast(CursorResult[Any], changed).rowcount != 1:
+            if changed.rowcount != 1:
                 raise MemoryError("VERSION_CONFLICT", "Memory version changed")
             await session.execute(
                 text(
@@ -222,7 +220,7 @@ class MemoryService(ContinuityService):
                 ),
                 {"id": record_id, "pid": project_id, "version": expected_version, "at": now()},
             )
-            if cast(CursorResult[Any], changed).rowcount != 1:
+            if changed.rowcount != 1:
                 raise MemoryError("VERSION_CONFLICT", "Memory version changed")
             await session.execute(text("DELETE FROM memory_fts WHERE record_id=:id"), {"id": record_id})
             await session.execute(text("DELETE FROM memory_versions WHERE record_id=:id"), {"id": record_id})
@@ -274,11 +272,15 @@ class MemoryService(ContinuityService):
         root = Path(project["root"])
         prepared: list[tuple[str, str, str]] = []
         for relative in paths:
+            if is_excluded(relative, self.excluded_paths):
+                raise MemoryError("ACCESS_DENIED", "Source path is excluded or outside project")
             try:
                 path = (root / relative).resolve(strict=True)
             except (OSError, RuntimeError) as exc:
                 raise MemoryError("INVALID_REFERENCE", "Source path is unavailable") from exc
-            if not path.is_relative_to(root) or path.name == ".env" or "secrets" in path.parts:
+            if not path.is_relative_to(root) or is_excluded(
+                path.relative_to(root) if path.is_relative_to(root) else path, self.excluded_paths
+            ):
                 raise MemoryError("ACCESS_DENIED", "Source path is excluded or outside project")
             if not path.is_file():
                 raise MemoryError("INVALID_REFERENCE", "Source is not a regular file")
@@ -562,13 +564,9 @@ class MemoryService(ContinuityService):
             raise MemoryError("CONTEXT_BUDGET_TOO_SMALL", f"Required context needs {mandatory} characters")
         search = await self.memory_search(project_id=project_id, query=query, scope=str(task["scope"]), limit=100)
         source_freshness: dict[str, bool] = {}
-        for hit in cast(list[dict[str, Any]], search["items"]):
-            if hit["id"] in package["policy_refs"]:
-                continue
-            if hit["category"] == "policies":
-                continue
-            stale = False
-            for ref in hit["source_refs"]:
+
+        async def refs_fresh(refs: list[str], record_id: str) -> bool:
+            for ref in refs:
                 if ref not in source_freshness:
                     async with self.session_factory() as session:
                         source = (
@@ -595,10 +593,14 @@ class MemoryService(ContinuityService):
                         source_freshness[ref] = path.is_relative_to(root) and _hash(data) == source["content_hash"]
                 if not source_freshness[ref]:
                     if len(package["warnings"]) < 10:
-                        package["warnings"].append(f"Related source changed for memory {hit['id']}")
-                    stale = True
-                    break
-            if stale:
+                        package["warnings"].append(f"Related source changed for memory {record_id}")
+                    return False
+            return True
+
+        for hit in cast(list[dict[str, Any]], search["items"]):
+            if hit["id"] in package["policy_refs"] or hit["category"] == "policies":
+                continue
+            if not await refs_fresh(hit["source_refs"], hit["id"]):
                 continue
             item = {
                 "id": hit["id"],
@@ -615,6 +617,59 @@ class MemoryService(ContinuityService):
                 package["source_refs"] = list(
                     dict.fromkeys(ref for entry in package["selected_items"] for ref in entry["source_refs"])
                 )
+
+        # Expand one explicit edge from selected records, with a bounded count and the same scope/freshness gates.
+        selected_ids = [str(item["id"]) for item in package["selected_items"]]
+        related_count = 0
+        for source_id in selected_ids:
+            if related_count >= 10:
+                break
+            async with self.session_factory() as session:
+                rows = (
+                    (
+                        await session.execute(
+                            text(
+                                "SELECT rel.target_id,rel.relation_type,r.category,v.title,v.body,v.source_refs "
+                                "FROM relations rel JOIN memory_records r ON r.id=rel.target_id "
+                                "JOIN memory_versions v ON v.record_id=r.id AND v.version=r.current_version "
+                                "WHERE rel.project_id=:pid AND rel.source_id=:source AND r.project_id=:pid "
+                                "AND r.status='active' AND r.deleted_at IS NULL "
+                                "AND (r.scope='' OR r.scope=:scope) ORDER BY rel.id LIMIT 10"
+                            ),
+                            {"pid": project_id, "source": source_id, "scope": task["scope"]},
+                        )
+                    )
+                    .mappings()
+                    .all()
+                )
+            for row in rows:
+                target_id = str(row["target_id"])
+                if target_id in {str(item["id"]) for item in package["selected_items"]}:
+                    continue
+                refs = cast(list[str], json.loads(row["source_refs"]))
+                if not await refs_fresh(refs, target_id):
+                    continue
+                package["selected_items"].append(
+                    {
+                        "id": target_id,
+                        "category": row["category"],
+                        "title": row["title"],
+                        "snippet": str(row["body"])[:280],
+                        "source_refs": refs,
+                        "related_from": source_id,
+                        "relation_type": row["relation_type"],
+                    }
+                )
+                package["source_refs"] = list(dict.fromkeys([*package["source_refs"], *refs]))
+                if measure() > budget_chars:
+                    package["selected_items"].pop()
+                    package["source_refs"] = list(
+                        dict.fromkeys(ref for entry in package["selected_items"] for ref in entry["source_refs"])
+                    )
+                    continue
+                related_count += 1
+                if related_count >= 10:
+                    break
         while measure() > budget_chars:
             optional = next(
                 (

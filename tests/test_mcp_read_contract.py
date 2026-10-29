@@ -3,6 +3,7 @@ from mcp import Client
 
 from project_memory.config import Settings
 from project_memory.infrastructure.db import migrate
+from project_memory.interfaces.http import create_app
 from project_memory.interfaces.mcp import create_mcp
 
 
@@ -50,3 +51,15 @@ def test_output_contracts_cover_operations_and_reject_invalid_results():
         validate_output("memory_search", {"items": [], "next_cursor": "1"})
     with pytest.raises(ValidationError):
         validate_output("session_end", {"id": "s", "status": "ended", "unexpected": True})
+
+
+def test_openapi_exposes_operation_specific_inputs_and_outputs(tmp_path):
+    app = create_app(Settings(data_dir=tmp_path, http_token="test-token"))
+    spec = app.openapi()
+    operation = spec["paths"]["/v1/memory_read"]["post"]
+    request_ref = operation["requestBody"]["content"]["application/json"]["schema"]["$ref"]
+    response_ref = operation["responses"]["200"]["content"]["application/json"]["schema"]["$ref"]
+    assert request_ref.endswith("/memory_readRequest")
+    assert response_ref.endswith("/MemoryRead")
+    arguments_ref = spec["components"]["schemas"]["memory_readRequest"]["properties"]["arguments"]["$ref"]
+    assert "record_id" in spec["components"]["schemas"][arguments_ref.rsplit("/", 1)[-1]]["properties"]
