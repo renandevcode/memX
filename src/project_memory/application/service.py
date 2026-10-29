@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 from datetime import UTC, datetime
@@ -202,7 +203,24 @@ class MemoryService:
             raise MemoryError("INVALID_INPUT", "Event exceeds 32768 bytes")
         if not kind or not idempotency_key:
             raise MemoryError("INVALID_INPUT", "Kind and idempotency key are required")
-        if any(key.lower() in {"password", "token", "secret", "api_key"} for key in payload):
+
+        def contains_excluded(value: object) -> bool:
+            if isinstance(value, dict):
+                for key, item in value.items():
+                    lowered = str(key).lower()
+                    if lowered in {"password", "token", "secret", "api_key", "authorization"}:
+                        return True
+                    if lowered in {"path", "file", "artifact_ref"} and isinstance(item, str):
+                        parts = Path(item).parts
+                        if ".env" in parts or "secrets" in parts:
+                            return True
+                    if contains_excluded(item):
+                        return True
+            elif isinstance(value, list):
+                return any(contains_excluded(item) for item in value)
+            return False
+
+        if contains_excluded(payload):
             raise MemoryError("INVALID_INPUT", "Sensitive payload field is excluded")
         digest = fingerprint({"kind": kind, "payload": payload, "task_id": task_id})
         async with self.session_factory() as session, session.begin():
@@ -263,8 +281,26 @@ class MemoryService:
         checkout_ref: dict[str, object],
         verification_status: str = "unverified",
     ) -> dict[str, object]:
-        if verification_status not in {"unverified", "observed", "verified", "needs_review"}:
-            raise MemoryError("INVALID_INPUT", "Invalid evidence status")
+        if verification_status != "unverified":
+            raise MemoryError("INVALID_INPUT", "Explicit client evidence remains unverified")
+        project = await self.project_read(project_id)
+        root = Path(project["root"])
+        try:
+            artifact = (root / artifact_ref).resolve(strict=True)
+        except (OSError, RuntimeError) as exc:
+            raise MemoryError("INVALID_REFERENCE", "Artifact path is unavailable") from exc
+        if (
+            not artifact.is_relative_to(root)
+            or not artifact.is_file()
+            or ".env" in artifact.parts
+            or "secrets" in artifact.parts
+        ):
+            raise MemoryError("ACCESS_DENIED", "Artifact path is excluded or outside project")
+        data = await asyncio.to_thread(artifact.read_bytes)
+        if len(data) > 65536:
+            raise MemoryError("INVALID_INPUT", "Artifact exceeds 65536 bytes")
+        if hashlib.sha256(data).hexdigest() != content_hash:
+            raise MemoryError("INVALID_INPUT", "Artifact hash mismatch")
         evidence_id = new_id()
         async with self.session_factory() as session, session.begin():
             await self._project_exists(session, project_id)
@@ -316,6 +352,17 @@ class MemoryService:
             "checkout_ref": checkout_ref,
         }
         digest = fingerprint(body)
+        project = await self.project_read(project_id)
+        root = Path(project["root"])
+        for relative in changed_paths:
+            path = (root / relative).resolve()
+            if (
+                Path(relative).is_absolute()
+                or not path.is_relative_to(root)
+                or ".env" in path.parts
+                or "secrets" in path.parts
+            ):
+                raise MemoryError("ACCESS_DENIED", "Changed path is excluded or outside project")
         async with self.session_factory() as session, session.begin():
             task = await self._row(session, "tasks", task_id, project_id)
             owner = await self._row(session, "sessions", session_id, project_id)

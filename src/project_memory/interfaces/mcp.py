@@ -26,8 +26,10 @@ def create_mcp(settings: Settings | None = None) -> MCPServer:
                 engine = make_engine(config.db_url)
                 try:
                     method = getattr(MemoryService(engine), name)
-                    result: dict[str, Any] = await method(**arguments)
-                    return result
+                    result: Any = await method(**arguments)
+                    if isinstance(result, dict):
+                        return result
+                    return {"items": result} if isinstance(result, list) else {"result": result}
                 except MemoryError as exc:
                     raise ToolError(f"{exc.code}: {exc.detail}") from exc
                 finally:
