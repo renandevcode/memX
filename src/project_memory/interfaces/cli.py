@@ -13,6 +13,7 @@ from project_memory.application.handoff import MemoryService
 from project_memory.application.service import MemoryError
 from project_memory.config import Settings
 from project_memory.infrastructure.db import make_engine, migrate
+from project_memory.interfaces.binding import resolve_binding
 from project_memory.interfaces.contracts import validate_arguments
 
 app = typer.Typer(help="MemX local memory operations")
@@ -90,9 +91,19 @@ def call(operation: str, arguments: str = typer.Argument("{}")) -> None:
         raise typer.BadParameter(str(exc)) from exc
 
     async def run() -> dict[str, Any]:
-        engine = make_engine(Settings().db_url)
+        settings, binding = resolve_binding()
+        if binding and operation != "project_register":
+            if payload.get("project_id", binding.project_id) != binding.project_id:
+                raise MemoryError("ACCESS_DENIED", "Project differs from current activation")
+            payload["project_id"] = binding.project_id
+        engine = make_engine(settings.db_url)
         try:
-            method = getattr(MemoryService(engine), operation)
+            service = MemoryService(engine)
+            if binding:
+                project = await service.project_read(binding.project_id)
+                if project["root"] != binding.root:
+                    raise MemoryError("ACCESS_DENIED", "Database project root differs from activation")
+            method = getattr(service, operation)
             result: dict[str, Any] = await method(**validate_arguments(operation, payload))
             return result
         finally:

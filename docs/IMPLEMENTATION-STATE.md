@@ -2,7 +2,7 @@
 
 ## Branch e base
 
-- Atual: `feat/tool-contracts`, derivada de `feat/project-activation` (`44e0acc`), ainda não integrada na main.
+- Atual: `feat/project-binding`, derivada de `feat/tool-contracts` (`c69050c`), ainda não integrada na main.
 - Branches seguintes serão derivadas da entrega anterior até integração explícita na main.
 - Os dois anexos originais estavam fora do controle de versão e foram preservados no local.
 
@@ -35,6 +35,9 @@
 Completar M4 antes de considerar o MVP integralmente entregue. Lacunas conhecidas: serviços ainda dependem de SQLAlchemy; não há DTO específico por operação; expansão de relações no contexto, configuração de exclusões, logs estruturados e transições completas de tarefa ainda precisam ser implementados. Validar migração de atualização, além da criação de banco vazio já exercitada nos testes. Nenhum host nativo externo foi validado.
 
 ## Incremento de demo validado
+
+- Identidade local: CLI e MCP resolvem `.memx.json` na pasta atual ou ancestral, selecionam o banco configurado e recusam ID/banco conflitante. Ferramentas MCP vinculadas têm `project_id` preenchido por padrão. 14 testes passaram; mypy e Ruff passaram. Consulta real em `teste` sem ID retornou a memória esperada.
+- Reparação autorizada dos dados de teste: registro `baabae4581a5488fad2a243215c58f1c` e versões copiados do banco temporário para o projeto permanente `c57cb6238e384e1b9944402d4fda8ef4`, sem apagar origem. Backup prévio: `/home/renan/.local/share/memx/backup-before-import-20261029T133659.sqlite3`. Transferência pontual não representa uma ferramenta geral de migração entre projetos.
 
 - Contratos de entrada: modelos Pydantic específicos derivados das assinaturas públicas, compartilhados por CLI/HTTP/MCP, com tipos estritos e campos extras proibidos. MCP publica os schemas detalhados dentro de `arguments`. Hook de falha transacional não é público. 13 testes passaram, incluindo a demo stdio. Validação estrutural MCP é feita pelo SDK e retorna seus erros de campo; códigos de domínio continuam emitidos pelo serviço. Modelos de saída e OpenAPI detalhado por operação ainda pendentes.
 

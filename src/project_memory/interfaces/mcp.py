@@ -13,11 +13,12 @@ from project_memory.application.handoff import MemoryService
 from project_memory.application.service import MemoryError
 from project_memory.config import Settings
 from project_memory.infrastructure.db import make_engine, migrate
-from project_memory.interfaces.contracts import CONTRACTS, OPERATIONS
+from project_memory.interfaces.binding import resolve_binding
+from project_memory.interfaces.contracts import OPERATIONS, operation_model
 
 
 def create_mcp(settings: Settings | None = None) -> MCPServer:
-    config = settings or Settings()
+    config, binding = (settings, None) if settings is not None else resolve_binding()
     server = MCPServer("MemX")
 
     for operation in sorted(OPERATIONS):
@@ -27,7 +28,15 @@ def create_mcp(settings: Settings | None = None) -> MCPServer:
                 """Invoke a MemX operation with its named arguments as a JSON object."""
                 engine = make_engine(config.db_url)
                 try:
-                    method = getattr(MemoryService(engine), name)
+                    service = MemoryService(engine)
+                    if binding:
+                        arguments_dict = arguments.model_dump()
+                        if arguments_dict.get("project_id", binding.project_id) != binding.project_id:
+                            raise MemoryError("ACCESS_DENIED", "Project differs from current activation")
+                        project = await service.project_read(binding.project_id)
+                        if project["root"] != binding.root:
+                            raise MemoryError("ACCESS_DENIED", "Database root differs from activation")
+                    method = getattr(service, name)
                     try:
                         inspect.signature(method).bind(**arguments.model_dump())
                     except TypeError as exc:
@@ -41,7 +50,7 @@ def create_mcp(settings: Settings | None = None) -> MCPServer:
                 finally:
                     await engine.dispose()
 
-            handler.__annotations__["arguments"] = CONTRACTS[name]
+            handler.__annotations__["arguments"] = operation_model(name, binding.project_id if binding else None)
             return handler
 
         signature = inspect.signature(getattr(MemoryService, operation))
@@ -56,9 +65,9 @@ def create_mcp(settings: Settings | None = None) -> MCPServer:
 
 
 def main() -> None:
-    config = Settings()
+    config, _binding = resolve_binding()
     migrate(config.db_url)
-    create_mcp(config).run(transport="stdio")
+    create_mcp().run(transport="stdio")
 
 
 if __name__ == "__main__":
