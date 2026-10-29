@@ -22,6 +22,7 @@ dependencies = [
 
 [project.scripts]
 memx = "project_memory.interfaces.cli:app"
+memx-mcp = "project_memory.interfaces.mcp:main"
 
 [tool.uv]
 default-groups = ["dev"]
