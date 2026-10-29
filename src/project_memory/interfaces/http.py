@@ -15,7 +15,7 @@ from project_memory.application.handoff import MemoryService
 from project_memory.application.service import MemoryError
 from project_memory.config import Settings
 from project_memory.infrastructure.db import make_engine
-from project_memory.interfaces.contracts import OPERATIONS, validate_arguments
+from project_memory.interfaces.contracts import OPERATIONS, validate_arguments, validate_output
 
 
 class OperationRequest(BaseModel):
@@ -46,22 +46,24 @@ def create_app(settings: Settings | None = None, engine: AsyncEngine | None = No
     @app.post("/v1/{operation}")
     async def invoke(
         operation: str, request: OperationRequest, authorization: str | None = Header(default=None)
-    ) -> dict[str, Any]:
+    ) -> Any:
         expected = f"Bearer {config.http_token}"
         if authorization is None or not hmac.compare_digest(authorization, expected):
             raise HTTPException(status_code=401, detail={"code": "ACCESS_DENIED"})
         if operation not in OPERATIONS:
             raise HTTPException(status_code=404, detail={"code": "NOT_FOUND"})
         try:
-            method = getattr(service, operation)
-            result: dict[str, Any] = await method(**validate_arguments(operation, request.arguments))
-            return result
+            arguments = validate_arguments(operation, request.arguments)
+        except (TypeError, ValidationError) as exc:
+            raise HTTPException(status_code=422, detail={"code": "INVALID_INPUT"}) from exc
+        try:
+            result = await getattr(service, operation)(**arguments)
         except MemoryError as exc:
             status = 409 if exc.code.endswith("CONFLICT") else 400
             if exc.code == "NOT_FOUND":
                 status = 404
             raise HTTPException(status_code=status, detail={"code": exc.code, "message": exc.detail}) from exc
-        except (TypeError, ValidationError) as exc:
-            raise HTTPException(status_code=422, detail={"code": "INVALID_INPUT"}) from exc
+        validated = validate_output(operation, result)
+        return validated.model_dump() if isinstance(validated, BaseModel) else validated
 
     return app

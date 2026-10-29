@@ -27,7 +27,7 @@ uv sync --locked
 uv run --locked python examples/demo_ocr.py
 ```
 
-A fixture é sintética e usa dados temporários. O teste verifica persistência e continuidade; não executa um algoritmo OCR real. O MVP ainda tem lacunas registradas em `docs/IMPLEMENTATION-STATE.md`.
+A fixture é sintética e usa dados temporários. O teste verifica persistência e continuidade; não executa um algoritmo OCR real.
 
 Memória persistente local para agentes de programação. Implementação inicial em Python 3.12.
 
@@ -68,4 +68,4 @@ curl -H "Authorization: Bearer $MEMX_HTTP_TOKEN" -H 'Content-Type: application/j
 
 OpenAPI fica em `/docs`. Para MCP stdio, use `uv run --locked memx-mcp`; consulte [conexão manual](docs/integrations/MCP.md) e [instruções sugeridas ao agente](docs/integrations/AGENT-INSTRUCTIONS.example.md).
 
-O MVP é desenvolvido em marcos M0–M4. Consulte [o estado da implementação](docs/IMPLEMENTATION-STATE.md) para o progresso real.
+O MVP é desenvolvido em marcos M0–M4.

@@ -17,3 +17,5 @@ Os testes usam clientes `mcp.Client` independentes em memória e a demo usa dois
 Referência do SDK: https://py.sdk.modelcontextprotocol.io/run/ e https://py.sdk.modelcontextprotocol.io/client/.
 
 Cada ferramenta publica agora o schema específico de `arguments`, com campos obrigatórios e tipos. Campos desconhecidos são rejeitados. Para ler memória, envie `project_id` e `record_id`, com `version` opcional. Reinicie a sessão do host para atualizar a lista de ferramentas. Erros estruturais de entrada são retornados pelo SDK com os campos inválidos; erros de domínio mantêm os códigos do serviço.
+
+Projetos ativados por `memx init` fixam o `cwd` do servidor na raiz. Nesse modo, `project_id` pode ser omitido: o servidor o resolve pelo marcador local e rejeita identidades divergentes. A configuração nativa do Codex foi conferida com `codex mcp get memx --json`; consulta e gravação espontâneas pelo modelo ainda não foram verificadas.

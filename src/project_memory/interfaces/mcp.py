@@ -14,7 +14,7 @@ from project_memory.application.service import MemoryError
 from project_memory.config import Settings
 from project_memory.infrastructure.db import make_engine, migrate
 from project_memory.interfaces.binding import resolve_binding
-from project_memory.interfaces.contracts import OPERATIONS, operation_model
+from project_memory.interfaces.contracts import OPERATIONS, operation_model, validate_output
 
 
 def create_mcp(settings: Settings | None = None) -> MCPServer:
@@ -41,7 +41,11 @@ def create_mcp(settings: Settings | None = None) -> MCPServer:
                         inspect.signature(method).bind(**arguments.model_dump())
                     except TypeError as exc:
                         raise ToolError(f"INVALID_INPUT: {exc}") from exc
-                    result: Any = await method(**arguments.model_dump())
+                    result: Any = validate_output(name, await method(**arguments.model_dump()))
+                    if isinstance(result, BaseModel):
+                        result = result.model_dump()
+                    elif isinstance(result, list):
+                        result = [item.model_dump() if isinstance(item, BaseModel) else item for item in result]
                     if isinstance(result, dict):
                         return result
                     return {"items": result} if isinstance(result, list) else {"result": result}
