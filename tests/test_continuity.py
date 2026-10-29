@@ -1,3 +1,4 @@
+import hashlib
 from pathlib import Path
 
 import pytest
@@ -50,11 +51,13 @@ async def test_checkpoint_is_atomic_idempotent_and_survives_restart(tmp_path: Pa
             idempotency_key="event-1",
         )
     assert conflict.value.code == "IDEMPOTENCY_CONFLICT"
+    artifact = tmp_path / "rotated.txt"
+    artifact.write_text("rotated fixture failed")
     evidence = await service.evidence_create(
         project_id=pid,
         kind="test_output",
-        artifact_ref="tests/rotated.txt",
-        content_hash="synthetic-hash",
+        artifact_ref="rotated.txt",
+        content_hash=hashlib.sha256(artifact.read_bytes()).hexdigest(),
         checkout_ref={"dirty": True},
     )
     args = dict(

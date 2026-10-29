@@ -1,5 +1,14 @@
 # MemX
 
+Para executar a demo OCR com dois clientes MCP stdio em processos separados:
+
+```bash
+uv sync --locked
+uv run --locked python examples/demo_ocr.py
+```
+
+A fixture é sintética e usa dados temporários. O teste verifica persistência e continuidade; não executa um algoritmo OCR real. O MVP ainda tem lacunas registradas em `docs/IMPLEMENTATION-STATE.md`.
+
 Memória persistente local para agentes de programação. Implementação inicial em Python 3.12.
 
 ## Ambiente

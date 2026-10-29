@@ -133,6 +133,7 @@ async def test_required_policy_context_budget_and_changed_source(tmp_path: Path)
     changed = await service.context_build(project_id=pid, task_id=tid, budget_chars=4000)
     assert changed["missing_required"] == [sources[0]["record_id"]]
     assert "Mandatory: use async" not in str(changed)
+    assert relevant["id"] not in [item["id"] for item in changed["selected_items"]]
     outside = tmp_path / "outside.md"
     outside.write_text("not authorized")
     (root / "outside.md").symlink_to(outside)

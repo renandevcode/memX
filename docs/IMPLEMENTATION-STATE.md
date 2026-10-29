@@ -2,7 +2,7 @@
 
 ## Branch e base
 
-- Atual: `feat/m3-interfaces-handoff`, derivada de `feat/m2-memory-context` (`bab1da3`), ainda não integrada na main.
+- Atual: `feat/m4-demo-validation`, derivada de `feat/m3-interfaces-handoff` (`8adf2a3`), ainda não integrada na main.
 - Branches seguintes serão derivadas da entrega anterior até integração explícita na main.
 - Os dois anexos originais estavam fora do controle de versão e foram preservados no local.
 
@@ -12,7 +12,8 @@
 - M1 concluído: tarefa, sessão, evento idempotente, evidência declarativa, checkpoint atômico e CLI local.
 - M2 concluído: registros versionados, documentos oficiais indexados, FTS5 e contexto com limite de caracteres.
 - M3 concluído: handoff persistente, API HTTP local com token e MCP stdio via SDK oficial.
-- M4 pendente.
+- M4 parcialmente concluído: demo com dois subprocessos MCP stdio passa; suíte com 8 testes passa, Ruff e mypy passam.
+- M4 ainda exige revisão de conformidade arquitetural, contratos por operação, observabilidade, operação e validação de atualização de migração.
 
 ## Decisões
 
@@ -31,4 +32,14 @@
 
 ## Próximo passo
 
-Em M4, executar demo em subprocessos, ampliar casos críticos e documentar operação e limites.
+Completar M4 antes de considerar o MVP integralmente entregue. Lacunas conhecidas: serviços ainda dependem de SQLAlchemy; não há DTO específico por operação; expansão de relações no contexto, configuração de exclusões, logs estruturados e transições completas de tarefa ainda precisam ser implementados. Validar migração de atualização, além da criação de banco vazio já exercitada nos testes. Nenhum host nativo externo foi validado.
+
+## Incremento de demo validado
+
+- Correção de contrato MCP: descrições agora enumeram parâmetros reais; argumentos incorretos retornam `INVALID_INPUT` com indicação do campo obrigatório. `memory_read` exige `record_id`. Teste dedicado passou; Ruff e mypy passaram. Schemas específicos por operação continuam pendentes.
+
+- Executar: `uv run --locked python examples/demo_ocr.py`.
+- `uv run --locked pytest -q`: 8 testes passaram, incluindo a demo em subprocessos reais.
+- Ruff e mypy passaram após as correções dos retornos MCP de listas e escalares.
+- Evidência exige arquivo sob a raiz, hash correspondente e limite de tamanho; permanece `unverified`, pois o teste OCR é uma fixture sintética.
+- Eventos rejeitam campos sensíveis também em estruturas aninhadas. Isso não constitui detecção completa de segredos.

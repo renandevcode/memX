@@ -561,10 +561,44 @@ class MemoryService(ContinuityService):
         if mandatory > budget_chars:
             raise MemoryError("CONTEXT_BUDGET_TOO_SMALL", f"Required context needs {mandatory} characters")
         search = await self.memory_search(project_id=project_id, query=query, scope=str(task["scope"]), limit=100)
+        source_freshness: dict[str, bool] = {}
         for hit in cast(list[dict[str, Any]], search["items"]):
             if hit["id"] in package["policy_refs"]:
                 continue
             if hit["category"] == "policies":
+                continue
+            stale = False
+            for ref in hit["source_refs"]:
+                if ref not in source_freshness:
+                    async with self.session_factory() as session:
+                        source = (
+                            (
+                                await session.execute(
+                                    text(
+                                        "SELECT relative_path,content_hash FROM source_documents "
+                                        "WHERE id=:id AND project_id=:pid"
+                                    ),
+                                    {"id": ref, "pid": project_id},
+                                )
+                            )
+                            .mappings()
+                            .first()
+                        )
+                    if source is None:
+                        source_freshness[ref] = True
+                    else:
+                        path = (root / source["relative_path"]).resolve()
+                        try:
+                            data = await asyncio.to_thread(path.read_bytes)
+                        except OSError:
+                            data = b""
+                        source_freshness[ref] = path.is_relative_to(root) and _hash(data) == source["content_hash"]
+                if not source_freshness[ref]:
+                    if len(package["warnings"]) < 10:
+                        package["warnings"].append(f"Related source changed for memory {hit['id']}")
+                    stale = True
+                    break
+            if stale:
                 continue
             item = {
                 "id": hit["id"],
@@ -581,5 +615,19 @@ class MemoryService(ContinuityService):
                 package["source_refs"] = list(
                     dict.fromkeys(ref for entry in package["selected_items"] for ref in entry["source_refs"])
                 )
-        measure()
+        while measure() > budget_chars:
+            optional = next(
+                (
+                    index
+                    for index in range(len(package["selected_items"]) - 1, -1, -1)
+                    if package["selected_items"][index]["category"] != "policies"
+                ),
+                None,
+            )
+            if optional is None:
+                raise MemoryError("CONTEXT_BUDGET_TOO_SMALL", f"Required context needs {measure()} characters")
+            package["selected_items"].pop(optional)
+            package["source_refs"] = list(
+                dict.fromkeys(ref for entry in package["selected_items"] for ref in entry["source_refs"])
+            )
         return package
