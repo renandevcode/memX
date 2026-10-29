@@ -1,5 +1,13 @@
 # MemX
 
+Dentro de um projeto ativado, a CLI resolve automaticamente sua identidade e seu banco:
+
+```bash
+memx call memory_search '{"query":"Mecânica inicial"}'
+```
+
+O MCP também preenche `project_id` quando iniciado dentro do projeto ativado. Um `MEMX_DATA_DIR` conflitante com `.memx.json` gera erro, evitando consultar silenciosamente outro banco. Fora de um projeto ativado, informe a identidade explicitamente.
+
 Ativação inicial em outro projeto (implementação ainda em validação):
 
 ```bash
