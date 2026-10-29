@@ -1,12 +1,13 @@
 """Local command-line interface using the application service."""
 
 import asyncio
+import ipaddress
 import json
 from typing import Any
 
 import typer
 
-from project_memory.application.memory import MemoryService
+from project_memory.application.handoff import MemoryService
 from project_memory.application.service import MemoryError
 from project_memory.config import Settings
 from project_memory.infrastructure.db import make_engine, migrate
@@ -19,6 +20,20 @@ def init_database() -> None:
     """Apply versioned migrations to the configured local database."""
     migrate(Settings().db_url)
     typer.echo("Database migrated")
+
+
+@app.command("serve-http")
+def serve_http() -> None:
+    """Serve the token-protected local API on a loopback address."""
+    import uvicorn
+
+    from project_memory.interfaces.http import create_app
+
+    config = Settings()
+    if not ipaddress.ip_address(config.http_host).is_loopback:
+        raise typer.BadParameter("HTTP host must be a loopback address")
+    migrate(config.db_url)
+    uvicorn.run(create_app(config), host=config.http_host, port=config.http_port)
 
 
 @app.command("call")
@@ -45,6 +60,8 @@ def call(operation: str, arguments: str = typer.Argument("{}")) -> None:
         "relation_create",
         "source_index",
         "context_build",
+        "handoff_create",
+        "handoff_accept",
     }
     if operation not in allowed:
         raise typer.BadParameter("Unknown operation")

@@ -27,4 +27,16 @@ O comando `call` recebe um objeto JSON com os argumentos nomeados do serviço. I
 
 `memory_delete` elimina versões e índice FTS do registro de banco, mas não apaga backups, histórico Git ou artefatos externos. `memory_reindex` reconstrói o índice apenas a partir de registros vivos. Dados sensíveis já presentes em backups exigem tratamento separado pelo operador.
 
+## HTTP e MCP
+
+Para HTTP local, defina `MEMX_HTTP_TOKEN` e execute `uv run --locked memx serve-http`. O servidor escuta apenas em loopback, por padrão `127.0.0.1:8765`. Exemplo:
+
+```bash
+curl -H "Authorization: Bearer $MEMX_HTTP_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"schema_version":1,"arguments":{"project_id":"ID","task_id":"ID"}}' \
+  http://127.0.0.1:8765/v1/task_read
+```
+
+OpenAPI fica em `/docs`. Para MCP stdio, use `uv run --locked memx-mcp`; consulte [conexão manual](docs/integrations/MCP.md) e [instruções sugeridas ao agente](docs/integrations/AGENT-INSTRUCTIONS.example.md).
+
 O MVP é desenvolvido em marcos M0–M4. Consulte [o estado da implementação](docs/IMPLEMENTATION-STATE.md) para o progresso real.
