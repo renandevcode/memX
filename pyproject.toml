@@ -22,6 +22,7 @@ dependencies = [
 
 [project.scripts]
 memx = "project_memory.interfaces.cli:app"
+memx-mcp = "project_memory.interfaces.mcp:main"
 
 [tool.uv]
 default-groups = ["dev"]
@@ -39,7 +40,7 @@ dev = [
 packages = ["src/project_memory"]
 
 [tool.ruff]
-line-length = 100
+line-length = 120
 target-version = "py312"
 
 [tool.ruff.lint]

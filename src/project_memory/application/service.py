@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
+import json
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any, cast
 from uuid import uuid4
 
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy.engine import CursorResult
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from project_memory.infrastructure.db import sessions
 
@@ -18,6 +23,14 @@ def new_id() -> str:
 
 def now() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def encoded(value: object) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
+def fingerprint(value: object) -> str:
+    return hashlib.sha256(encoded(value).encode()).hexdigest()
 
 
 class MemoryError(Exception):
@@ -41,9 +54,7 @@ class MemoryService:
         project_id = new_id()
         async with self.session_factory() as session, session.begin():
             existing = (
-                await session.execute(
-                    text("SELECT id FROM projects WHERE root=:root"), {"root": str(path)}
-                )
+                await session.execute(text("SELECT id FROM projects WHERE root=:root"), {"root": str(path)})
             ).scalar_one_or_none()
             if existing:
                 raise MemoryError("ALREADY_EXISTS", "Project root is already registered")
@@ -77,3 +88,362 @@ class MemoryService:
             if row is None:
                 raise MemoryError("NOT_FOUND", "Project not found")
             return dict(row)
+
+    async def _row(self, session: AsyncSession, table: str, entity_id: str, project_id: str) -> dict[str, object]:
+        if table not in {"tasks", "sessions", "evidence", "checkpoints", "handoffs"}:
+            raise ValueError("Unsupported entity")
+        row = (
+            (
+                await session.execute(
+                    text(f"SELECT * FROM {table} WHERE id=:id AND project_id=:project_id"),
+                    {"id": entity_id, "project_id": project_id},
+                )
+            )
+            .mappings()
+            .first()
+        )
+        if row is None:
+            raise MemoryError("INVALID_REFERENCE", f"{table} reference is missing from project")
+        return dict(row)
+
+    async def task_create(
+        self, *, project_id: str, title: str, objective: str, acceptance_criteria: list[str], scope: str = ""
+    ) -> dict[str, object]:
+        if not title.strip() or not objective.strip() or not acceptance_criteria:
+            raise MemoryError("INVALID_INPUT", "Task needs title, objective and acceptance criteria")
+        task_id = new_id()
+        async with self.session_factory() as session, session.begin():
+            await self._project_exists(session, project_id)
+            await session.execute(
+                text(
+                    "INSERT INTO tasks (id,project_id,title,objective,acceptance,scope,status,version) "
+                    "VALUES (:id,:project_id,:title,:objective,:acceptance,:scope,'todo',1)"
+                ),
+                {
+                    "id": task_id,
+                    "project_id": project_id,
+                    "title": title,
+                    "objective": objective,
+                    "acceptance": encoded(acceptance_criteria),
+                    "scope": scope,
+                },
+            )
+        return await self.task_read(project_id, task_id)
+
+    async def _project_exists(self, session: AsyncSession, project_id: str) -> None:
+        found = (
+            await session.execute(text("SELECT 1 FROM projects WHERE id=:id"), {"id": project_id})
+        ).scalar_one_or_none()
+        if found is None:
+            raise MemoryError("NOT_FOUND", "Project not found")
+
+    async def task_read(self, project_id: str, task_id: str) -> dict[str, object]:
+        async with self.session_factory() as session:
+            row = await self._row(session, "tasks", task_id, project_id)
+            row["acceptance_criteria"] = json.loads(str(row.pop("acceptance")))
+            return row
+
+    async def session_start(
+        self,
+        *,
+        project_id: str,
+        host: str,
+        agent_label: str,
+        task_id: str | None = None,
+        model_label: str | None = None,
+    ) -> dict[str, object]:
+        if not host.strip() or not agent_label.strip():
+            raise MemoryError("INVALID_INPUT", "Host and agent label are required")
+        session_id = new_id()
+        async with self.session_factory() as session, session.begin():
+            await self._project_exists(session, project_id)
+            if task_id:
+                await self._row(session, "tasks", task_id, project_id)
+            await session.execute(
+                text(
+                    "INSERT INTO sessions "
+                    "(id,project_id,task_id,host,agent_label,model_label,status,started_at) "
+                    "VALUES (:id,:project_id,:task_id,:host,:agent_label,:model_label,'active',:at)"
+                ),
+                {
+                    "id": session_id,
+                    "project_id": project_id,
+                    "task_id": task_id,
+                    "host": host,
+                    "agent_label": agent_label,
+                    "model_label": model_label,
+                    "at": now(),
+                },
+            )
+        return {"id": session_id, "project_id": project_id, "task_id": task_id, "host": host, "status": "active"}
+
+    async def session_end(self, *, project_id: str, session_id: str) -> dict[str, object]:
+        async with self.session_factory() as session, session.begin():
+            row = await self._row(session, "sessions", session_id, project_id)
+            if row["status"] != "active":
+                raise MemoryError("VERSION_CONFLICT", "Session already ended")
+            await session.execute(
+                text("UPDATE sessions SET status='ended',ended_at=:at WHERE id=:id"),
+                {"at": now(), "id": session_id},
+            )
+        return {"id": session_id, "status": "ended"}
+
+    async def event_append(
+        self,
+        *,
+        project_id: str,
+        session_id: str,
+        kind: str,
+        payload: dict[str, object],
+        idempotency_key: str,
+        task_id: str | None = None,
+    ) -> dict[str, object]:
+        content = encoded(payload)
+        if len(content.encode()) > 32768:
+            raise MemoryError("INVALID_INPUT", "Event exceeds 32768 bytes")
+        if not kind or not idempotency_key:
+            raise MemoryError("INVALID_INPUT", "Kind and idempotency key are required")
+
+        def contains_excluded(value: object) -> bool:
+            if isinstance(value, dict):
+                for key, item in value.items():
+                    lowered = str(key).lower()
+                    if lowered in {"password", "token", "secret", "api_key", "authorization"}:
+                        return True
+                    if lowered in {"path", "file", "artifact_ref"} and isinstance(item, str):
+                        parts = Path(item).parts
+                        if ".env" in parts or "secrets" in parts:
+                            return True
+                    if contains_excluded(item):
+                        return True
+            elif isinstance(value, list):
+                return any(contains_excluded(item) for item in value)
+            return False
+
+        if contains_excluded(payload):
+            raise MemoryError("INVALID_INPUT", "Sensitive payload field is excluded")
+        digest = fingerprint({"kind": kind, "payload": payload, "task_id": task_id})
+        async with self.session_factory() as session, session.begin():
+            owner = await self._row(session, "sessions", session_id, project_id)
+            if owner["status"] != "active":
+                raise MemoryError("VERSION_CONFLICT", "Session is not active")
+            if task_id:
+                await self._row(session, "tasks", task_id, project_id)
+            prior = (
+                (
+                    await session.execute(
+                        text("SELECT * FROM events WHERE session_id=:sid AND idempotency_key=:key"),
+                        {"sid": session_id, "key": idempotency_key},
+                    )
+                )
+                .mappings()
+                .first()
+            )
+            if prior:
+                if prior["fingerprint"] != digest:
+                    raise MemoryError("IDEMPOTENCY_CONFLICT", "Event key reused with different content")
+                return {"id": prior["id"], "sequence": prior["sequence"]}
+            sequence = (
+                await session.execute(
+                    text("SELECT COALESCE(MAX(sequence),0)+1 FROM events WHERE session_id=:sid"),
+                    {"sid": session_id},
+                )
+            ).scalar_one()
+            event_id = new_id()
+            await session.execute(
+                text(
+                    "INSERT INTO events "
+                    "(id,project_id,session_id,task_id,idempotency_key,fingerprint,sequence,kind,payload,captured_at) "
+                    "VALUES (:id,:pid,:sid,:tid,:key,:fp,:seq,:kind,:payload,:at)"
+                ),
+                {
+                    "id": event_id,
+                    "pid": project_id,
+                    "sid": session_id,
+                    "tid": task_id,
+                    "key": idempotency_key,
+                    "fp": digest,
+                    "seq": sequence,
+                    "kind": kind,
+                    "payload": content,
+                    "at": now(),
+                },
+            )
+        return {"id": event_id, "sequence": sequence}
+
+    async def evidence_create(
+        self,
+        *,
+        project_id: str,
+        kind: str,
+        artifact_ref: str,
+        content_hash: str,
+        checkout_ref: dict[str, object],
+        verification_status: str = "unverified",
+    ) -> dict[str, object]:
+        if verification_status != "unverified":
+            raise MemoryError("INVALID_INPUT", "Explicit client evidence remains unverified")
+        project = await self.project_read(project_id)
+        root = Path(project["root"])
+        try:
+            artifact = (root / artifact_ref).resolve(strict=True)
+        except (OSError, RuntimeError) as exc:
+            raise MemoryError("INVALID_REFERENCE", "Artifact path is unavailable") from exc
+        if (
+            not artifact.is_relative_to(root)
+            or not artifact.is_file()
+            or ".env" in artifact.parts
+            or "secrets" in artifact.parts
+        ):
+            raise MemoryError("ACCESS_DENIED", "Artifact path is excluded or outside project")
+        data = await asyncio.to_thread(artifact.read_bytes)
+        if len(data) > 65536:
+            raise MemoryError("INVALID_INPUT", "Artifact exceeds 65536 bytes")
+        if hashlib.sha256(data).hexdigest() != content_hash:
+            raise MemoryError("INVALID_INPUT", "Artifact hash mismatch")
+        evidence_id = new_id()
+        async with self.session_factory() as session, session.begin():
+            await self._project_exists(session, project_id)
+            await session.execute(
+                text(
+                    "INSERT INTO evidence "
+                    "(id,project_id,kind,artifact_ref,content_hash,checkout_ref,verification_status,observed_at) "
+                    "VALUES (:id,:pid,:kind,:ref,:hash,:checkout,:status,:at)"
+                ),
+                {
+                    "id": evidence_id,
+                    "pid": project_id,
+                    "kind": kind,
+                    "ref": artifact_ref,
+                    "hash": content_hash,
+                    "checkout": encoded(checkout_ref),
+                    "status": verification_status,
+                    "at": now(),
+                },
+            )
+        return {"id": evidence_id, "verification_status": verification_status}
+
+    async def task_checkpoint(
+        self,
+        *,
+        project_id: str,
+        task_id: str,
+        session_id: str,
+        expected_version: int,
+        completed: list[str],
+        pending: list[str],
+        blockers: list[str],
+        next_action: str,
+        changed_paths: list[str],
+        evidence_refs: list[str],
+        checkout_ref: dict[str, object],
+        idempotency_key: str,
+        fail_after_update: bool = False,
+    ) -> dict[str, object]:
+        body = {
+            "session_id": session_id,
+            "expected_version": expected_version,
+            "completed": completed,
+            "pending": pending,
+            "blockers": blockers,
+            "next_action": next_action,
+            "changed_paths": changed_paths,
+            "evidence_refs": evidence_refs,
+            "checkout_ref": checkout_ref,
+        }
+        digest = fingerprint(body)
+        project = await self.project_read(project_id)
+        root = Path(project["root"])
+        for relative in changed_paths:
+            path = (root / relative).resolve()
+            if (
+                Path(relative).is_absolute()
+                or not path.is_relative_to(root)
+                or ".env" in path.parts
+                or "secrets" in path.parts
+            ):
+                raise MemoryError("ACCESS_DENIED", "Changed path is excluded or outside project")
+        async with self.session_factory() as session, session.begin():
+            task = await self._row(session, "tasks", task_id, project_id)
+            owner = await self._row(session, "sessions", session_id, project_id)
+            if owner["task_id"] not in (None, task_id):
+                raise MemoryError("INVALID_REFERENCE", "Session belongs to another task")
+            prior = (
+                (
+                    await session.execute(
+                        text(
+                            "SELECT id,task_version,event_watermark,fingerprint FROM checkpoints "
+                            "WHERE task_id=:tid AND idempotency_key=:key"
+                        ),
+                        {"tid": task_id, "key": idempotency_key},
+                    )
+                )
+                .mappings()
+                .first()
+            )
+            if prior:
+                if prior["fingerprint"] != digest:
+                    raise MemoryError("IDEMPOTENCY_CONFLICT", "Checkpoint key reused")
+                return {
+                    "id": prior["id"],
+                    "task_version": prior["task_version"],
+                    "event_watermark": prior["event_watermark"],
+                }
+            if task["version"] != expected_version:
+                raise MemoryError("VERSION_CONFLICT", "Task version changed")
+            for ref in evidence_refs:
+                await self._row(session, "evidence", ref, project_id)
+            watermark = (
+                await session.execute(
+                    text("SELECT COALESCE(MAX(sequence),0) FROM events WHERE session_id=:sid"),
+                    {"sid": session_id},
+                )
+            ).scalar_one()
+            result = await session.execute(
+                text(
+                    "UPDATE tasks SET version=version+1,status='in_progress' "
+                    "WHERE id=:tid AND project_id=:pid AND version=:version"
+                ),
+                {"tid": task_id, "pid": project_id, "version": expected_version},
+            )
+            if cast(CursorResult[Any], result).rowcount != 1:
+                raise MemoryError("VERSION_CONFLICT", "Task version changed")
+            if fail_after_update:
+                raise RuntimeError("Injected transaction failure")
+            checkpoint_id = new_id()
+            await session.execute(
+                text(
+                    "INSERT INTO checkpoints "
+                    "(id,project_id,task_id,task_version,session_id,idempotency_key,fingerprint,"
+                    "completed,pending,blockers,next_action,changed_paths,evidence_refs,checkout_ref,"
+                    "event_watermark,created_at) VALUES "
+                    "(:id,:pid,:tid,:version,:sid,:key,:fp,:completed,:pending,:blockers,:next_action,"
+                    ":changed_paths,:evidence_refs,:checkout_ref,:watermark,:at)"
+                ),
+                {
+                    "id": checkpoint_id,
+                    "pid": project_id,
+                    "tid": task_id,
+                    "version": expected_version + 1,
+                    "sid": session_id,
+                    "key": idempotency_key,
+                    "fp": digest,
+                    "completed": encoded(completed),
+                    "pending": encoded(pending),
+                    "blockers": encoded(blockers),
+                    "next_action": next_action,
+                    "changed_paths": encoded(changed_paths),
+                    "evidence_refs": encoded(evidence_refs),
+                    "checkout_ref": encoded(checkout_ref),
+                    "watermark": watermark,
+                    "at": now(),
+                },
+            )
+        return {"id": checkpoint_id, "task_version": expected_version + 1, "event_watermark": watermark}
+
+    async def checkpoint_read(self, project_id: str, checkpoint_id: str) -> dict[str, object]:
+        async with self.session_factory() as session:
+            row = await self._row(session, "checkpoints", checkpoint_id, project_id)
+            for key in ("completed", "pending", "blockers", "changed_paths", "evidence_refs", "checkout_ref"):
+                row[key] = json.loads(str(row[key]))
+            return row
