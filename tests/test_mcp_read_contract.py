@@ -17,4 +17,20 @@ async def test_read_contract_exposes_record_id_and_reports_wrong_parameter(tmp_p
         invalid = await client.call_tool("memory_read", {"arguments": {"project_id": "p", "id": "r"}})
         assert invalid.is_error
         assert "record_id" in str(invalid.content)
-        assert "INVALID_INPUT" in str(invalid.content)
+        assert "extra_forbidden" in str(invalid.content)
+        schema = tool.input_schema
+        assert "record_id" in str(schema)
+        assert "additionalProperties" in str(schema)
+
+
+def test_contract_rejects_test_hooks_unknown_fields_and_wrong_types():
+    from pydantic import ValidationError
+
+    from project_memory.interfaces.contracts import CONTRACTS, validate_arguments
+
+    assert "fail_after_update" not in CONTRACTS["task_checkpoint"].model_fields
+    with pytest.raises(ValidationError):
+        validate_arguments("memory_read", {"project_id": "p", "record_id": "r", "version": "1"})
+    with pytest.raises(ValidationError):
+        validate_arguments("memory_read", {"project_id": "p", "record_id": "r", "memory_id": "r"})
+    assert validate_arguments("memory_read", {"project_id": "p", "record_id": "r"})["version"] is None

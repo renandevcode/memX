@@ -7,11 +7,13 @@ from pathlib import Path
 from typing import Annotated, Any
 
 import typer
+from pydantic import ValidationError
 
 from project_memory.application.handoff import MemoryService
 from project_memory.application.service import MemoryError
 from project_memory.config import Settings
 from project_memory.infrastructure.db import make_engine, migrate
+from project_memory.interfaces.contracts import validate_arguments
 
 app = typer.Typer(help="MemX local memory operations")
 
@@ -91,13 +93,16 @@ def call(operation: str, arguments: str = typer.Argument("{}")) -> None:
         engine = make_engine(Settings().db_url)
         try:
             method = getattr(MemoryService(engine), operation)
-            result: dict[str, Any] = await method(**payload)
+            result: dict[str, Any] = await method(**validate_arguments(operation, payload))
             return result
         finally:
             await engine.dispose()
 
     try:
         typer.echo(json.dumps(asyncio.run(run()), ensure_ascii=False))
+    except ValidationError as exc:
+        typer.echo("INVALID_INPUT: arguments do not match the operation schema", err=True)
+        raise typer.Exit(1) from exc
     except MemoryError as exc:
         typer.echo(json.dumps({"error": exc.code, "detail": exc.detail}), err=True)
         raise typer.Exit(1) from exc
