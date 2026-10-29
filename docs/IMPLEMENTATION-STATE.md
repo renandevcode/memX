@@ -2,7 +2,7 @@
 
 ## Branch e base
 
-- Atual: `feat/project-activation`, derivada de `feat/m4-demo-validation` (`5c092bd`), ainda não integrada na main.
+- Atual: `feat/tool-contracts`, derivada de `feat/project-activation` (`44e0acc`), ainda não integrada na main.
 - Branches seguintes serão derivadas da entrega anterior até integração explícita na main.
 - Os dois anexos originais estavam fora do controle de versão e foram preservados no local.
 
@@ -35,6 +35,8 @@
 Completar M4 antes de considerar o MVP integralmente entregue. Lacunas conhecidas: serviços ainda dependem de SQLAlchemy; não há DTO específico por operação; expansão de relações no contexto, configuração de exclusões, logs estruturados e transições completas de tarefa ainda precisam ser implementados. Validar migração de atualização, além da criação de banco vazio já exercitada nos testes. Nenhum host nativo externo foi validado.
 
 ## Incremento de demo validado
+
+- Contratos de entrada: modelos Pydantic específicos derivados das assinaturas públicas, compartilhados por CLI/HTTP/MCP, com tipos estritos e campos extras proibidos. MCP publica os schemas detalhados dentro de `arguments`. Hook de falha transacional não é público. 13 testes passaram, incluindo a demo stdio. Validação estrutural MCP é feita pelo SDK e retorna seus erros de campo; códigos de domínio continuam emitidos pelo serviço. Modelos de saída e OpenAPI detalhado por operação ainda pendentes.
 
 - Robustez da ativação: escrita atômica por arquivo e retomada por reexecução após falha entre arquivos. Configuração TOML existente é comparada semanticamente; blocos equivalentes são reutilizados, conflitos são preservados e rejeitados. Symlinks são verificados antes de ler o marcador. Três testes de ativação passaram, incluindo falha injetada; Ruff e mypy passaram. Ainda não há exclusão mútua para duas ativações simultâneas.
 
