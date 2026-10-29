@@ -36,6 +36,8 @@ Completar M4 antes de considerar o MVP integralmente entregue. Lacunas conhecida
 
 ## Incremento de demo validado
 
+- Teste humano de retomada falhou: agente respondeu usando arquivo de outro projeto, sem comprovar leitura MemX. Banco permanente contém a decisão de cinco vidas na versão 2, confirmada pela CLI. Instruções gerenciadas agora explicitam o servidor MemX, fronteira do projeto, citação do registro/versão e conduta quando indisponível. Bloco antigo reconhecido é atualizado preservando conteúdo externo. Atualização aplicada em `teste`; quatro testes focados, Ruff e mypy passaram. Retomada espontânea ainda não validada.
+
 - Diretório MCP explícito: ativação grava `cwd` da raiz e atualiza a configuração antiga equivalente preservando outros campos. Quatro testes focados passaram: ativação e dois subprocessos MCP vinculados com gravação/leitura sem ID, persistência e rejeição de outro projeto. Ruff e mypy passaram. `codex mcp get memx --json` executado em `teste` confirmou servidor habilitado, banco permanente e cwd correto. Isso valida configuração nativa, não comportamento espontâneo do modelo durante uma conversa.
 
 - Identidade local: CLI e MCP resolvem `.memx.json` na pasta atual ou ancestral, selecionam o banco configurado e recusam ID/banco conflitante. Ferramentas MCP vinculadas têm `project_id` preenchido por padrão. 14 testes passaram; mypy e Ruff passaram. Consulta real em `teste` sem ID retornou a memória esperada.
