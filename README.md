@@ -28,7 +28,7 @@ Depois que houver memórias registradas, consulte-as com `"$MEMX_BIN" call memor
 
 `source_index` importa arquivos UTF-8 indicados explicitamente sob a raiz do projeto, com limite de 64 KiB por arquivo. O argumento `kind` aceita `policies`, `decisions` e `project_map`. Políticas importadas são editadas no arquivo de origem, não pelo serviço. `context_build` reúne contexto para uma tarefa com orçamento medido em caracteres do JSON serializado, não em tokens. Fontes alteradas geram aviso, e o texto antigo de uma política não é apresentado como atual.
 
-Consulte [operação local](docs/OPERATIONS.md) para backup, restauração, reindexação, exclusões e diagnóstico. A [revisão de arquitetura](docs/ARCHITECTURE-REVIEW.md) descreve o alcance e os limites do MVP, que cobre os marcos M0–M4.
+Consulte [operação local](docs/OPERATIONS.md) para backup, restauração, reindexação, exclusões e diagnóstico. A [revisão de arquitetura](docs/ARCHITECTURE-REVIEW.md) descreve o alcance e os limites do MVP, que cobre os marcos M0–M4. O [estado e próximo passo](docs/ROADMAP.md) registra a validação atual e o próximo objetivo.
 
 ## Integrações
 
