@@ -36,6 +36,8 @@ Completar M4 antes de considerar o MVP integralmente entregue. Lacunas conhecida
 
 ## Incremento de demo validado
 
+- Correção de contrato MCP: descrições agora enumeram parâmetros reais; argumentos incorretos retornam `INVALID_INPUT` com indicação do campo obrigatório. `memory_read` exige `record_id`. Teste dedicado passou; Ruff e mypy passaram. Schemas específicos por operação continuam pendentes.
+
 - Executar: `uv run --locked python examples/demo_ocr.py`.
 - `uv run --locked pytest -q`: 8 testes passaram, incluindo a demo em subprocessos reais.
 - Ruff e mypy passaram após as correções dos retornos MCP de listas e escalares.

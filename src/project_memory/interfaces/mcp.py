@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from typing import Any
 
 from mcp.server import MCPServer
@@ -26,6 +27,10 @@ def create_mcp(settings: Settings | None = None) -> MCPServer:
                 engine = make_engine(config.db_url)
                 try:
                     method = getattr(MemoryService(engine), name)
+                    try:
+                        inspect.signature(method).bind(**arguments)
+                    except TypeError as exc:
+                        raise ToolError(f"INVALID_INPUT: {exc}") from exc
                     result: Any = await method(**arguments)
                     if isinstance(result, dict):
                         return result
@@ -37,7 +42,10 @@ def create_mcp(settings: Settings | None = None) -> MCPServer:
 
             return handler
 
-        server.tool(name=operation)(make_handler(operation))
+        signature = inspect.signature(getattr(MemoryService, operation))
+        parameters = [str(parameter) for key, parameter in signature.parameters.items() if key != "self"]
+        description = f"{operation}: pass these named parameters inside arguments: " + ", ".join(parameters)
+        server.tool(name=operation, description=description)(make_handler(operation))
     return server
 
 
