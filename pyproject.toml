@@ -1,0 +1,56 @@
+[build-system]
+requires = ["hatchling==1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "project-memory"
+version = "0.1.0"
+description = "Local persistent memory for programming agents"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "aiosqlite==0.21.0",
+  "alembic==1.16.5",
+  "fastapi==0.116.1",
+  "mcp==2.3.0",
+  "pydantic==2.12.5",
+  "pydantic-settings==2.10.1",
+  "sqlalchemy==2.0.43",
+  "typer==0.16.1",
+  "uvicorn==0.35.0",
+]
+
+[project.scripts]
+memx = "project_memory.interfaces.cli:app"
+
+[tool.uv]
+default-groups = ["dev"]
+
+[dependency-groups]
+dev = [
+  "httpx==0.28.1",
+  "mypy==1.17.1",
+  "pytest==8.4.1",
+  "pytest-asyncio==1.1.0",
+  "ruff==0.12.11",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/project_memory"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+packages = ["project_memory"]
+mypy_path = "src"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
