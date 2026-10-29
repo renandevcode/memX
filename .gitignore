@@ -7,3 +7,13 @@ __pycache__/
 *.db
 *.sqlite3
 .env
+.env.*
+!.env.example
+secrets/
+*.pem
+*.key
+
+# Planejamento e notas locais, fora da entrega do código.
+/ESPECIFICACAO-TECNICA (1).md
+/PROMPT-CODEX (1).md
+/docs/IMPLEMENTATION-STATE.md

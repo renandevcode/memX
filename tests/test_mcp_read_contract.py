@@ -34,3 +34,19 @@ def test_contract_rejects_test_hooks_unknown_fields_and_wrong_types():
     with pytest.raises(ValidationError):
         validate_arguments("memory_read", {"project_id": "p", "record_id": "r", "memory_id": "r"})
     assert validate_arguments("memory_read", {"project_id": "p", "record_id": "r"})["version"] is None
+
+
+def test_output_contracts_cover_operations_and_reject_invalid_results():
+    from pydantic import ValidationError
+
+    from project_memory.interfaces.contracts import OPERATIONS, OUTPUT_ADAPTERS, validate_output
+
+    assert OUTPUT_ADAPTERS.keys() == OPERATIONS
+    assert validate_output("memory_reindex", 2) == 2
+    assert validate_output("source_index", []) == []
+    with pytest.raises(ValidationError):
+        validate_output("memory_reindex", "2")
+    with pytest.raises(ValidationError):
+        validate_output("memory_search", {"items": [], "next_cursor": "1"})
+    with pytest.raises(ValidationError):
+        validate_output("session_end", {"id": "s", "status": "ended", "unexpected": True})
