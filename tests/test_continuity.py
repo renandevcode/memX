@@ -8,6 +8,41 @@ from project_memory.infrastructure.db import make_engine, migrate
 
 
 @pytest.mark.asyncio
+async def test_task_transitions_require_version_and_done_justification(tmp_path: Path) -> None:
+    url = f"sqlite+aiosqlite:///{tmp_path / 'state.db'}"
+    migrate(url)
+    engine = make_engine(url)
+    service = MemoryService(engine)
+    pid = (await service.project_register(root=str(tmp_path), name="Project"))["id"]
+    task = await service.task_create(project_id=pid, title="Task", objective="Finish", acceptance_criteria=["reviewed"])
+    tid = task["id"]
+    progress = await service.task_transition(
+        project_id=pid, task_id=tid, expected_version=1, status="in_progress", reason="Started"
+    )
+    assert progress["version"] == 2
+    with pytest.raises(MemoryError) as stale:
+        await service.task_transition(
+            project_id=pid, task_id=tid, expected_version=1, status="in_review", reason="Stale"
+        )
+    assert stale.value.code == "VERSION_CONFLICT"
+    await service.task_transition(project_id=pid, task_id=tid, expected_version=2, status="in_review", reason="Review")
+    with pytest.raises(MemoryError) as unproven:
+        await service.task_transition(project_id=pid, task_id=tid, expected_version=3, status="done", reason="Done")
+    assert unproven.value.code == "INVALID_REFERENCE"
+    assert (await service.task_read(pid, tid))["version"] == 3
+    done = await service.task_transition(
+        project_id=pid,
+        task_id=tid,
+        expected_version=3,
+        status="done",
+        reason="Accepted by operator",
+        human_exception="The operator explicitly accepted this fixture",
+    )
+    assert done == {"id": tid, "status": "done", "version": 4}
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
 async def test_checkpoint_is_atomic_idempotent_and_survives_restart(tmp_path: Path) -> None:
     db_url = f"sqlite+aiosqlite:///{tmp_path / 'mem.sqlite3'}"
     migrate(db_url)

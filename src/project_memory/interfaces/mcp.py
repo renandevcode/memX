@@ -15,6 +15,7 @@ from project_memory.config import Settings
 from project_memory.infrastructure.db import make_engine, migrate
 from project_memory.interfaces.binding import resolve_binding
 from project_memory.interfaces.contracts import OPERATIONS, operation_model, validate_output
+from project_memory.observability import operation_span
 
 
 def create_mcp(settings: Settings | None = None) -> MCPServer:
@@ -28,7 +29,7 @@ def create_mcp(settings: Settings | None = None) -> MCPServer:
                 """Invoke a MemX operation with its named arguments as a JSON object."""
                 engine = make_engine(config.db_url)
                 try:
-                    service = MemoryService(engine)
+                    service = MemoryService(engine, config.excluded_paths)
                     if binding:
                         arguments_dict = arguments.model_dump()
                         if arguments_dict.get("project_id", binding.project_id) != binding.project_id:
@@ -41,7 +42,8 @@ def create_mcp(settings: Settings | None = None) -> MCPServer:
                         inspect.signature(method).bind(**arguments.model_dump())
                     except TypeError as exc:
                         raise ToolError(f"INVALID_INPUT: {exc}") from exc
-                    result: Any = validate_output(name, await method(**arguments.model_dump()))
+                    with operation_span(name, arguments.model_dump().get("project_id")):
+                        result: Any = validate_output(name, await method(**arguments.model_dump()))
                     if isinstance(result, BaseModel):
                         result = result.model_dump()
                     elif isinstance(result, list):

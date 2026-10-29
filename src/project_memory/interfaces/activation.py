@@ -7,9 +7,8 @@ import tempfile
 import tomllib
 from pathlib import Path
 
-from sqlalchemy import text
-
 from project_memory.application.handoff import MemoryService
+from project_memory.application.storage import text
 from project_memory.config import Settings
 from project_memory.infrastructure.db import make_engine
 

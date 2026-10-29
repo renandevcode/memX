@@ -14,7 +14,8 @@ from project_memory.application.service import MemoryError
 from project_memory.config import Settings
 from project_memory.infrastructure.db import make_engine, migrate
 from project_memory.interfaces.binding import resolve_binding
-from project_memory.interfaces.contracts import validate_arguments
+from project_memory.interfaces.contracts import validate_arguments, validate_output
+from project_memory.observability import operation_span
 
 app = typer.Typer(help="MemX local memory operations")
 
@@ -62,6 +63,7 @@ def call(operation: str, arguments: str = typer.Argument("{}")) -> None:
         "project_read",
         "task_create",
         "task_read",
+        "task_transition",
         "session_start",
         "session_end",
         "event_append",
@@ -90,7 +92,7 @@ def call(operation: str, arguments: str = typer.Argument("{}")) -> None:
     except (json.JSONDecodeError, ValueError) as exc:
         raise typer.BadParameter(str(exc)) from exc
 
-    async def run() -> dict[str, Any]:
+    async def run() -> Any:
         settings, binding = resolve_binding()
         if binding and operation != "project_register":
             if payload.get("project_id", binding.project_id) != binding.project_id:
@@ -98,13 +100,19 @@ def call(operation: str, arguments: str = typer.Argument("{}")) -> None:
             payload["project_id"] = binding.project_id
         engine = make_engine(settings.db_url)
         try:
-            service = MemoryService(engine)
+            service = MemoryService(engine, settings.excluded_paths)
             if binding:
                 project = await service.project_read(binding.project_id)
                 if project["root"] != binding.root:
                     raise MemoryError("ACCESS_DENIED", "Database project root differs from activation")
             method = getattr(service, operation)
-            result: dict[str, Any] = await method(**validate_arguments(operation, payload))
+            arguments = validate_arguments(operation, payload)
+            with operation_span(operation, arguments.get("project_id")):
+                result: Any = validate_output(operation, await method(**arguments))
+            if hasattr(result, "model_dump"):
+                return result.model_dump()
+            if isinstance(result, list):
+                return [item.model_dump() if hasattr(item, "model_dump") else item for item in result]
             return result
         finally:
             await engine.dispose()

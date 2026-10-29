@@ -132,6 +132,12 @@ async def test_two_clients_handoff_once_and_http_rules(tmp_path: Path) -> None:
         response = await client.post("/v1/task_read", json=request, headers={"Authorization": "Bearer test-token"})
         assert response.status_code == 200
         assert response.json()["version"] == 2
+        invalid = await client.post(
+            "/v1/task_read",
+            json={"schema_version": 1, "arguments": {"project_id": pid, "task_id": tid, "unexpected": True}},
+            headers={"Authorization": "Bearer test-token"},
+        )
+        assert invalid.status_code == 422
     await engine.dispose()
 
 

@@ -8,15 +8,18 @@ memx call memory_search '{"query":"Mecânica inicial"}'
 
 O MCP também preenche `project_id` quando iniciado dentro do projeto ativado. Um `MEMX_DATA_DIR` conflitante com `.memx.json` gera erro, evitando consultar silenciosamente outro banco. Fora de um projeto ativado, informe a identidade explicitamente.
 
-Ativação inicial em outro projeto (implementação ainda em validação):
+Ativação inicial em outro projeto, após preparar o ambiente do MemX:
 
 ```bash
+cd /caminho/do/memoryX
+uv sync --locked
+MEMX_BIN="$PWD/.venv/bin/memx"
 cd /caminho/do/jogo
-/home/renan/Documentos/memoryX/.venv/bin/memx init
+"$MEMX_BIN" init
 codex
 ```
 
-O comando associa a pasta ao banco externo, acrescenta instruções em `AGENTS.md` e configura o MCP local em `.codex/config.toml`. Preserve esses arquivos; o caminho do Python gerado é específico desta instalação. O Codex pode exigir confiança no projeto para carregar sua configuração. O fluxo nativo ainda não foi validado. Para apenas migrar o banco, use `memx db-init`.
+O comando associa a pasta ao banco externo, acrescenta instruções em `AGENTS.md` e configura o MCP local em `.codex/config.toml`. Preserve esses arquivos; o caminho do Python gerado é específico desta instalação. O Codex pode exigir confiança no projeto para carregar sua configuração. A consulta nativa foi validada em um projeto de teste; outros hosts podem se comportar de forma diferente. Para apenas migrar o banco, use `memx db-init`.
 
 Se uma gravação da ativação falhar, execute `memx init` novamente com o mesmo diretório de dados. Arquivos são substituídos atomicamente e configurações equivalentes são reutilizadas. Configurações conflitantes são preservadas e geram erro para reconciliação explícita. Execute apenas uma ativação por projeto de cada vez.
 
@@ -69,3 +72,7 @@ curl -H "Authorization: Bearer $MEMX_HTTP_TOKEN" -H 'Content-Type: application/j
 OpenAPI fica em `/docs`. Para MCP stdio, use `uv run --locked memx-mcp`; consulte [conexão manual](docs/integrations/MCP.md) e [instruções sugeridas ao agente](docs/integrations/AGENT-INSTRUCTIONS.example.md).
 
 O MVP é desenvolvido em marcos M0–M4.
+
+Para backup, restauração, reindexação, exclusões e diagnóstico, consulte
+[operação local](docs/OPERATIONS.md). A [revisão de arquitetura](docs/ARCHITECTURE-REVIEW.md)
+registra o alcance do MVP e seus limites atuais.

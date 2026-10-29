@@ -8,30 +8,30 @@ from contextlib import asynccontextmanager
 from typing import Any, Literal
 
 from fastapi import FastAPI, Header, HTTPException
-from pydantic import BaseModel, ConfigDict, ValidationError
-from sqlalchemy.ext.asyncio import AsyncEngine
+from pydantic import BaseModel, ConfigDict, ValidationError, create_model
 
 from project_memory.application.handoff import MemoryService
 from project_memory.application.service import MemoryError
+from project_memory.application.storage import Store
 from project_memory.config import Settings
 from project_memory.infrastructure.db import make_engine
-from project_memory.interfaces.contracts import OPERATIONS, validate_arguments, validate_output
+from project_memory.interfaces.contracts import (
+    OPERATIONS,
+    OUTPUT_TYPES,
+    operation_model,
+    validate_arguments,
+    validate_output,
+)
+from project_memory.observability import operation_span
 
 
-class OperationRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    schema_version: Literal[1] = 1
-    arguments: dict[str, Any]
-
-
-def create_app(settings: Settings | None = None, engine: AsyncEngine | None = None) -> FastAPI:
+def create_app(settings: Settings | None = None, engine: Store | None = None) -> FastAPI:
     config = settings or Settings()
     if not config.http_token:
         raise ValueError("MEMX_HTTP_TOKEN is required for HTTP")
     own_engine = engine is None
     db_engine = engine or make_engine(config.db_url)
-    service = MemoryService(db_engine)
+    service = MemoryService(db_engine, config.excluded_paths)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
@@ -43,27 +43,46 @@ def create_app(settings: Settings | None = None, engine: AsyncEngine | None = No
 
     app = FastAPI(title="MemX local API", version="1", lifespan=lifespan)
 
-    @app.post("/v1/{operation}")
-    async def invoke(
-        operation: str, request: OperationRequest, authorization: str | None = Header(default=None)
-    ) -> Any:
+    async def invoke(operation: str, request: Any, authorization: str | None) -> Any:
         expected = f"Bearer {config.http_token}"
         if authorization is None or not hmac.compare_digest(authorization, expected):
             raise HTTPException(status_code=401, detail={"code": "ACCESS_DENIED"})
-        if operation not in OPERATIONS:
-            raise HTTPException(status_code=404, detail={"code": "NOT_FOUND"})
         try:
-            arguments = validate_arguments(operation, request.arguments)
+            arguments = validate_arguments(operation, request.arguments.model_dump())
         except (TypeError, ValidationError) as exc:
             raise HTTPException(status_code=422, detail={"code": "INVALID_INPUT"}) from exc
         try:
-            result = await getattr(service, operation)(**arguments)
+            with operation_span(operation, arguments.get("project_id")):
+                result = await getattr(service, operation)(**arguments)
+                validated = validate_output(operation, result)
         except MemoryError as exc:
             status = 409 if exc.code.endswith("CONFLICT") else 400
             if exc.code == "NOT_FOUND":
                 status = 404
             raise HTTPException(status_code=status, detail={"code": exc.code, "message": exc.detail}) from exc
-        validated = validate_output(operation, result)
         return validated.model_dump() if isinstance(validated, BaseModel) else validated
+
+    for name in sorted(OPERATIONS):
+        request_model = create_model(
+            name + "Request",
+            __config__=ConfigDict(extra="forbid"),
+            schema_version=(Literal[1], 1),
+            arguments=(operation_model(name), ...),
+        )
+
+        def make_endpoint(operation: str, model: type[BaseModel]) -> Any:
+            async def endpoint(request: BaseModel, authorization: str | None = Header(default=None)) -> Any:
+                return await invoke(operation, request, authorization)
+
+            endpoint.__annotations__["request"] = model
+            return endpoint
+
+        app.add_api_route(
+            f"/v1/{name}",
+            make_endpoint(name, request_model),
+            methods=["POST"],
+            response_model=OUTPUT_TYPES[name],
+            name=name,
+        )
 
     return app
