@@ -36,6 +36,8 @@ Completar M4 antes de considerar o MVP integralmente entregue. Lacunas conhecida
 
 ## Incremento de demo validado
 
+- Diretório MCP explícito: ativação grava `cwd` da raiz e atualiza a configuração antiga equivalente preservando outros campos. Quatro testes focados passaram: ativação e dois subprocessos MCP vinculados com gravação/leitura sem ID, persistência e rejeição de outro projeto. Ruff e mypy passaram. `codex mcp get memx --json` executado em `teste` confirmou servidor habilitado, banco permanente e cwd correto. Isso valida configuração nativa, não comportamento espontâneo do modelo durante uma conversa.
+
 - Identidade local: CLI e MCP resolvem `.memx.json` na pasta atual ou ancestral, selecionam o banco configurado e recusam ID/banco conflitante. Ferramentas MCP vinculadas têm `project_id` preenchido por padrão. 14 testes passaram; mypy e Ruff passaram. Consulta real em `teste` sem ID retornou a memória esperada.
 - Reparação autorizada dos dados de teste: registro `baabae4581a5488fad2a243215c58f1c` e versões copiados do banco temporário para o projeto permanente `c57cb6238e384e1b9944402d4fda8ef4`, sem apagar origem. Backup prévio: `/home/renan/.local/share/memx/backup-before-import-20261029T133659.sqlite3`. Transferência pontual não representa uma ferramenta geral de migração entre projetos.
 

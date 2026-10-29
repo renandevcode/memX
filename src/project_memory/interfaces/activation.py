@@ -44,11 +44,13 @@ async def activate(root: Path, settings: Settings) -> dict[str, str]:
     parsed = tomllib.loads(existing_config)
     expected_server = {
         "command": sys.executable,
+        "cwd": str(root),
         "args": ["-m", "project_memory.interfaces.mcp"],
         "env": {"MEMX_DATA_DIR": str(settings.data_dir.resolve())},
     }
     existing_server = parsed.get("mcp_servers", {}).get("memx")
-    if existing_server is not None and existing_server != expected_server:
+    legacy_server = {key: value for key, value in expected_server.items() if key != "cwd"}
+    if existing_server is not None and existing_server not in (expected_server, legacy_server):
         raise ValueError("Existing project MCP configuration contains a conflicting memx server")
     engine = make_engine(settings.db_url)
     try:
@@ -69,6 +71,7 @@ async def activate(root: Path, settings: Settings) -> dict[str, str]:
         existing_config
         + "\n[mcp_servers.memx]\n"
         + f"command = {json.dumps(sys.executable)}\n"
+        + f"cwd = {json.dumps(str(root))}\n"
         + 'args = ["-m", "project_memory.interfaces.mcp"]\n'
         + "[mcp_servers.memx.env]\n"
         + f"MEMX_DATA_DIR = {json.dumps(saved['data_dir'])}\n"
@@ -90,6 +93,11 @@ async def activate(root: Path, settings: Settings) -> dict[str, str]:
     # matching server/configuration and managed blocks are reused without duplication.
     if existing_server is None:
         atomic_write(config_path, config_content)
+    elif existing_server == legacy_server:
+        header = "[mcp_servers.memx]\n"
+        if existing_config.count(header) != 1:
+            raise ValueError("Legacy MCP section needs explicit reconciliation")
+        atomic_write(config_path, existing_config.replace(header, header + f"cwd = {json.dumps(str(root))}\n", 1))
     if managed_block not in existing_agents:
         atomic_write(agents_path, existing_agents + managed_block)
     atomic_write(marker, json.dumps(saved, indent=2) + "\n")
