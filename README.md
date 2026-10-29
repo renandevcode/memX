@@ -1,67 +1,40 @@
 # MemX
 
-Dentro de um projeto ativado, a CLI resolve automaticamente sua identidade e seu banco:
+Memória persistente local para agentes de programação. O MemX guarda projetos, tarefas, decisões, fontes e checkpoints em SQLite para que um agente possa recuperar contexto e retomar trabalho entre sessões. O MVP usa Python 3.12 e não precisa de chave de modelo.
 
-```bash
-memx call memory_search '{"query":"Mecânica inicial"}'
-```
+## Início rápido
 
-O MCP também preenche `project_id` quando iniciado dentro do projeto ativado. Um `MEMX_DATA_DIR` conflitante com `.memx.json` gera erro, evitando consultar silenciosamente outro banco. Fora de um projeto ativado, informe a identidade explicitamente.
-
-Ativação inicial em outro projeto, após preparar o ambiente do MemX:
+Instale as dependências no repositório do MemX e ative a pasta do projeto que usará a memória:
 
 ```bash
 cd /caminho/do/memoryX
 uv sync --locked
 MEMX_BIN="$PWD/.venv/bin/memx"
-cd /caminho/do/jogo
+
+cd /caminho/do/projeto
 "$MEMX_BIN" init
-codex
+"$MEMX_BIN" call task_create '{"title":"OCR","objective":"Corrigir rotação","acceptance_criteria":["fixture passa"],"scope":"ocr"}'
 ```
 
-O comando associa a pasta ao banco externo, acrescenta instruções em `AGENTS.md` e configura o MCP local em `.codex/config.toml`. Preserve esses arquivos; o caminho do Python gerado é específico desta instalação. O Codex pode exigir confiança no projeto para carregar sua configuração. A consulta nativa foi validada em um projeto de teste; outros hosts podem se comportar de forma diferente. Para apenas migrar o banco, use `memx db-init`.
+`init` registra a pasta, grava sua identidade em `.memx.json`, acrescenta instruções a `AGENTS.md` e configura o servidor MCP em `.codex/config.toml`. Dentro da pasta ativada, CLI e MCP preenchem `project_id` automaticamente. Para usar o MemX no Codex, inicie `codex` nessa pasta depois da ativação; o Codex pode exigir confiança no projeto para carregar a configuração local.
 
-Se uma gravação da ativação falhar, execute `memx init` novamente com o mesmo diretório de dados. Arquivos são substituídos atomicamente e configurações equivalentes são reutilizadas. Configurações conflitantes são preservadas e geram erro para reconciliação explícita. Execute apenas uma ativação por projeto de cada vez.
+Os dados ficam em `~/.local/share/memx` por padrão. Defina `MEMX_DATA_DIR` antes de `init` para usar outro diretório. Um valor diferente do registrado em `.memx.json` gera erro, evitando consultar outro banco por engano. A configuração gerada aponta para o Python desta instalação do MemX; preserve `.memx.json`, `AGENTS.md` e `.codex/config.toml` ao reutilizar o projeto.
 
-Para executar a demo OCR com dois clientes MCP stdio em processos separados:
+## Uso local
 
-```bash
-uv sync --locked
-uv run --locked python examples/demo_ocr.py
-```
+`memx call` recebe o nome da operação e um objeto JSON com seus argumentos. Dentro de um projeto ativado, omita `project_id`; fora dele, informe o ID explicitamente. Use os IDs retornados para consultar ou atualizar tarefas, sessões e registros. Execute `"$MEMX_BIN" --help` para ver os comandos. Para aplicar apenas as migrações do banco, use `"$MEMX_BIN" db-init`.
 
-A fixture é sintética e usa dados temporários. O teste verifica persistência e continuidade; não executa um algoritmo OCR real.
+Depois que houver memórias registradas, consulte-as com `"$MEMX_BIN" call memory_search '{"query":"OCR"}'` e leia o resultado com `memory_read`, passando o `id` encontrado como `record_id`. A busca comum mostra apenas registros ativos.
 
-Memória persistente local para agentes de programação. Implementação inicial em Python 3.12.
+`source_index` importa arquivos UTF-8 indicados explicitamente sob a raiz do projeto, com limite de 64 KiB por arquivo. O argumento `kind` aceita `policies`, `decisions` e `project_map`. Políticas importadas são editadas no arquivo de origem, não pelo serviço. `context_build` reúne contexto para uma tarefa com orçamento medido em caracteres do JSON serializado, não em tokens. Fontes alteradas geram aviso, e o texto antigo de uma política não é apresentado como atual.
 
-## Ambiente
+Consulte [operação local](docs/OPERATIONS.md) para backup, restauração, reindexação, exclusões e diagnóstico. A [revisão de arquitetura](docs/ARCHITECTURE-REVIEW.md) descreve o alcance e os limites do MVP, que cobre os marcos M0–M4.
 
-```bash
-uv sync --locked
-uv run --locked pytest
-```
+## Integrações
 
-Os dados operacionais ficam em `~/.local/share/memx` por padrão. Defina `MEMX_DATA_DIR` para outro local. Nenhuma chave de modelo é necessária.
+O `init` configura o MCP stdio para o projeto ativado. Para conectar outro cliente manualmente, consulte [conexão MCP](docs/integrations/MCP.md) e [instruções sugeridas ao agente](docs/integrations/AGENT-INSTRUCTIONS.example.md). A consulta nativa com Codex foi validada em um projeto de teste; outros clientes podem se comportar de forma diferente.
 
-## CLI local
-
-```bash
-uv run --locked memx init
-uv run --locked memx call project_register '{"root":"/caminho/para/projeto","name":"Exemplo"}'
-uv run --locked memx call task_create '{"project_id":"ID","title":"OCR","objective":"Corrigir rotação","acceptance_criteria":["fixture passa"],"scope":"ocr"}'
-```
-
-O comando `call` recebe um objeto JSON com os argumentos nomeados do serviço. IDs retornados devem ser passados explicitamente nas operações seguintes. `memx --help` lista comandos.
-
-## Fontes e contexto
-
-`source_index` importa apenas arquivos UTF-8 explicitamente indicados sob a raiz do projeto (até 64 KiB por arquivo). `kind` aceita `policies`, `decisions` e `project_map`. Arquivos de política importados são somente leitura pelo serviço e precisam ser editados no repositório de origem. O contexto é construído por `context_build` com `project_id`, `task_id`, `query` e `budget_chars`. O orçamento mede caracteres do JSON serializado, não tokens de um modelo. Fonte alterada gera aviso e o texto antigo da política não é fornecido como atual.
-
-`memory_delete` elimina versões e índice FTS do registro de banco, mas não apaga backups, histórico Git ou artefatos externos. `memory_reindex` reconstrói o índice apenas a partir de registros vivos. Dados sensíveis já presentes em backups exigem tratamento separado pelo operador.
-
-## HTTP e MCP
-
-Para HTTP local, defina `MEMX_HTTP_TOKEN` e execute `uv run --locked memx serve-http`. O servidor escuta apenas em loopback, por padrão `127.0.0.1:8765`. Exemplo:
+Para a API HTTP local, defina `MEMX_HTTP_TOKEN` e execute `uv run --locked memx serve-http` no repositório do MemX. O servidor escuta apenas em loopback, por padrão `127.0.0.1:8765`; a documentação OpenAPI fica em `/docs`.
 
 ```bash
 curl -H "Authorization: Bearer $MEMX_HTTP_TOKEN" -H 'Content-Type: application/json' \
@@ -69,10 +42,16 @@ curl -H "Authorization: Bearer $MEMX_HTTP_TOKEN" -H 'Content-Type: application/j
   http://127.0.0.1:8765/v1/task_read
 ```
 
-OpenAPI fica em `/docs`. Para MCP stdio, use `uv run --locked memx-mcp`; consulte [conexão manual](docs/integrations/MCP.md) e [instruções sugeridas ao agente](docs/integrations/AGENT-INSTRUCTIONS.example.md).
+## Desenvolvimento e demonstração
 
-O MVP é desenvolvido em marcos M0–M4.
+No repositório do MemX:
 
-Para backup, restauração, reindexação, exclusões e diagnóstico, consulte
-[operação local](docs/OPERATIONS.md). A [revisão de arquitetura](docs/ARCHITECTURE-REVIEW.md)
-registra o alcance do MVP e seus limites atuais.
+```bash
+uv sync --locked
+uv run --locked pytest
+uv run --locked python examples/demo_ocr.py
+```
+
+A demonstração usa uma fixture sintética e dois clientes MCP stdio em processos separados. Ela verifica persistência e continuidade; não executa um algoritmo OCR real.
+
+Se uma ativação for interrompida, execute `memx init` novamente com o mesmo diretório de dados. Gravações são atômicas e configurações equivalentes são reutilizadas. Configurações conflitantes são preservadas e exigem reconciliação explícita. Execute apenas uma ativação por projeto de cada vez.
