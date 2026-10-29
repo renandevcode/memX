@@ -6,7 +6,8 @@ from typing import Any
 
 import typer
 
-from project_memory.application.service import MemoryError, MemoryService
+from project_memory.application.memory import MemoryService
+from project_memory.application.service import MemoryError
 from project_memory.config import Settings
 from project_memory.infrastructure.db import make_engine, migrate
 
@@ -34,6 +35,16 @@ def call(operation: str, arguments: str = typer.Argument("{}")) -> None:
         "evidence_create",
         "task_checkpoint",
         "checkpoint_read",
+        "memory_create",
+        "memory_read",
+        "memory_update",
+        "memory_archive",
+        "memory_delete",
+        "memory_search",
+        "memory_reindex",
+        "relation_create",
+        "source_index",
+        "context_build",
     }
     if operation not in allowed:
         raise typer.BadParameter("Unknown operation")

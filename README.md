@@ -21,4 +21,10 @@ uv run --locked memx call task_create '{"project_id":"ID","title":"OCR","objecti
 
 O comando `call` recebe um objeto JSON com os argumentos nomeados do serviço. IDs retornados devem ser passados explicitamente nas operações seguintes. `memx --help` lista comandos.
 
+## Fontes e contexto
+
+`source_index` importa apenas arquivos UTF-8 explicitamente indicados sob a raiz do projeto (até 64 KiB por arquivo). `kind` aceita `policies`, `decisions` e `project_map`. Arquivos de política importados são somente leitura pelo serviço e precisam ser editados no repositório de origem. O contexto é construído por `context_build` com `project_id`, `task_id`, `query` e `budget_chars`. O orçamento mede caracteres do JSON serializado, não tokens de um modelo. Fonte alterada gera aviso e o texto antigo da política não é fornecido como atual.
+
+`memory_delete` elimina versões e índice FTS do registro de banco, mas não apaga backups, histórico Git ou artefatos externos. `memory_reindex` reconstrói o índice apenas a partir de registros vivos. Dados sensíveis já presentes em backups exigem tratamento separado pelo operador.
+
 O MVP é desenvolvido em marcos M0–M4. Consulte [o estado da implementação](docs/IMPLEMENTATION-STATE.md) para o progresso real.
