@@ -10,6 +10,8 @@ codex
 
 O comando associa a pasta ao banco externo, acrescenta instruções em `AGENTS.md` e configura o MCP local em `.codex/config.toml`. Preserve esses arquivos; o caminho do Python gerado é específico desta instalação. O Codex pode exigir confiança no projeto para carregar sua configuração. O fluxo nativo ainda não foi validado. Para apenas migrar o banco, use `memx db-init`.
 
+Se uma gravação da ativação falhar, execute `memx init` novamente com o mesmo diretório de dados. Arquivos são substituídos atomicamente e configurações equivalentes são reutilizadas. Configurações conflitantes são preservadas e geram erro para reconciliação explícita. Execute apenas uma ativação por projeto de cada vez.
+
 Para executar a demo OCR com dois clientes MCP stdio em processos separados:
 
 ```bash

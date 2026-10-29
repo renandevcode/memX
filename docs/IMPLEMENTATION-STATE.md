@@ -36,6 +36,8 @@ Completar M4 antes de considerar o MVP integralmente entregue. Lacunas conhecida
 
 ## Incremento de demo validado
 
+- Robustez da ativação: escrita atômica por arquivo e retomada por reexecução após falha entre arquivos. Configuração TOML existente é comparada semanticamente; blocos equivalentes são reutilizados, conflitos são preservados e rejeitados. Symlinks são verificados antes de ler o marcador. Três testes de ativação passaram, incluindo falha injetada; Ruff e mypy passaram. Ainda não há exclusão mútua para duas ativações simultâneas.
+
 - Ativação inicial por projeto: `memx init --root CAMINHO` cadastra/reutiliza a raiz, grava `.memx.json`, acrescenta configuração MCP em `.codex/config.toml` e instruções em `AGENTS.md`. `memx db-init` mantém a preparação exclusiva do banco. 10 testes passaram; Ruff e mypy passaram. Validação nativa Codex, recuperação de falhas parciais e reconciliação de configuração existente ainda pendentes. A presença das instruções não garante captura automática pelo host.
 
 - Correção de contrato MCP: descrições agora enumeram parâmetros reais; argumentos incorretos retornam `INVALID_INPUT` com indicação do campo obrigatório. `memory_read` exige `record_id`. Teste dedicado passou; Ruff e mypy passaram. Schemas específicos por operação continuam pendentes.
